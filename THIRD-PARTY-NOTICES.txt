@@ -1,0 +1,246 @@
+Desktop Guard Pro Third-Party Software Notices
+
+This product contains third-party software in its Windows executables and
+compiled Web assets. This notice reflects the production dependency closure
+used by the 1.0.10 release.
+
+Vue.js 3.5.41
+https://github.com/vuejs/core
+
+The MIT License (MIT)
+
+Copyright (c) 2018-present, Yuxi (Evan) You
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+Go production dependency inventory
+==================================
+
+The four Windows programs distributed with Desktop Guard Pro use the Go
+modules listed below. Build-only and test-only modules are excluded.
+
+MIT-licensed modules
+--------------------
+
+github.com/adrg/xdg v0.5.3
+https://github.com/adrg/xdg
+Copyright (c) 2014 Adrian-George Bostan <adrg@epistack.com>
+
+github.com/dustin/go-humanize v1.0.1
+https://github.com/dustin/go-humanize
+Copyright (c) 2005-2008 Dustin Sallings <dustin@spy.net>
+
+github.com/go-ole/go-ole v1.3.0
+https://github.com/go-ole/go-ole
+Copyright (c) 2013-2017 Yasuhiro Matsumoto <mattn.jp@gmail.com>
+
+github.com/mattn/go-colorable v0.1.14
+https://github.com/mattn/go-colorable
+Copyright (c) 2016 Yasuhiro Matsumoto
+
+github.com/mattn/go-isatty v0.0.24
+https://github.com/mattn/go-isatty
+Copyright (c) Yasuhiro MATSUMOTO <mattn.jp@gmail.com>
+
+github.com/Microsoft/go-winio v0.6.2
+https://github.com/microsoft/go-winio
+Copyright (c) 2015 Microsoft
+
+github.com/ncruces/go-strftime v1.0.0
+https://github.com/ncruces/go-strftime
+Copyright (c) 2022 Nuno Cruces
+
+The Wails module used by the Go programs is covered by the Wails Runtime
+notice above.
+
+The following MIT license applies to the modules listed in this section:
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+BSD 3-Clause-licensed modules
+-----------------------------
+
+github.com/remyoudompheng/bigfft
+v0.0.0-20230129092748-24d4a6f8daec
+https://github.com/remyoudompheng/bigfft
+Copyright (c) 2012 The Go Authors. All rights reserved.
+
+golang.org/x/sys v0.47.0
+https://go.googlesource.com/sys
+Copyright 2009 The Go Authors.
+
+modernc.org/libc v1.74.4
+https://pkg.go.dev/modernc.org/libc
+Copyright (c) 2017 The Libc Authors. All rights reserved.
+
+modernc.org/mathutil v1.7.1
+https://pkg.go.dev/modernc.org/mathutil
+Copyright (c) 2014 The mathutil Authors. All rights reserved.
+
+modernc.org/memory v1.11.0
+https://pkg.go.dev/modernc.org/memory
+Copyright (c) 2017 The Memory Authors. All rights reserved.
+
+modernc.org/sqlite v1.57.0
+https://pkg.go.dev/modernc.org/sqlite
+Copyright (c) 2017 The Sqlite Authors. All rights reserved.
+
+The following BSD 3-Clause license applies to the modules listed in this
+section:
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+Embedded notices from modernc.org modules
+=========================================
+
+modernc.org/libc includes material from Go, musl libc, go-netdb and
+NixOS/nixpkgs. modernc.org/memory includes material from Go and mmap-go.
+modernc.org/sqlite includes SQLite and sqlite-vec code.
+
+Go
+--
+
+https://go.googlesource.com/go
+Copyright (c) 2009 The Go Authors. All rights reserved.
+
+The Go material is available under the BSD 3-Clause license reproduced above.
+
+musl libc
+---------
+
+https://musl.libc.org/
+Copyright (c) 2005-2020 Rich Felker, et al.
+
+The musl material is available under the MIT license reproduced above.
+
+Its TRE regular expression implementation is Copyright (c) 2001-2008 Ville
+Laurikari under a 2-clause BSD license. The ARM memcpy code is Copyright (c)
+2008 The Android Open Source Project under a 2-clause BSD license. The AArch64
+memcpy and memset code is Copyright (c) 1999-2019 Arm Limited. Other math,
+complex, cryptographic and architecture-specific portions retain the
+copyright and permissive-license notices present in their source files.
+
+go-netdb
+--------
+
+https://github.com/dominikh/go-netdb
+Copyright (c) 2012 Dominik Honnef
+
+The go-netdb material is available under the MIT license reproduced above.
+
+NixOS/nixpkgs
+-------------
+
+https://github.com/NixOS/nixpkgs
+Copyright (c) 2003-2025 Eelco Dolstra and the Nixpkgs/NixOS contributors
+
+The NixOS/nixpkgs material is available under the MIT license reproduced
+above.
+
+mmap-go
+-------
+
+https://github.com/edsrzf/mmap-go
+Copyright (c) 2011 Evan Shaw <edsrzf@gmail.com>. All rights reserved.
+
+The mmap-go material is available under the BSD 3-Clause license reproduced
+above.
+
+SQLite
+------
+
+https://www.sqlite.org/copyright.html
+
+All SQLite deliverable code and documentation have been dedicated to the
+public domain by their authors. Anyone may copy, modify, publish, use,
+compile, sell or distribute that code, in source or compiled form, for
+commercial or non-commercial purposes and by any means.
+
+sqlite-vec
+----------
+
+https://github.com/asg017/sqlite-vec
+Copyright (c) 2024 Alex Garcia
+
+The sqlite-vec material is available under the MIT license reproduced above.
+
+Wails Runtime 3.0.0-beta.12
+https://github.com/wailsapp/wails
+
+MIT License
+
+Copyright (c) 2018-Present Lea Anthony
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.

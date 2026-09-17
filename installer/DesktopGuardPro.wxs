@@ -1,0 +1,213 @@
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+    Id="*"
+    Name="Desktop Guard Pro"
+    Manufacturer="Desktop Guard Pro"
+    Version="$(var.ProductVersion)"
+    Language="2052"
+    Codepage="936"
+    UpgradeCode="{9B523A70-6B5D-4E2B-94F4-1BBFE167E706}">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Platform="x64" />
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of Desktop Guard Pro is already installed."
+      Schedule="afterInstallExecute" />
+    <MediaTemplate EmbedCab="yes" />
+    <Icon Id="DesktopGuardProIcon" SourceFile="..\assets\desktop-guard-pro.ico" />
+    <Property Id="ARPPRODUCTICON" Value="DesktopGuardProIcon" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <Property Id="CREATE_DESKTOP_SHORTCUT" Value="1" Secure="yes" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="安装完成后启动 Desktop Guard Pro" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WixShellExecTarget" Value="[#DesktopGuardUI]" />
+    <WixVariable Id="WixUIDialogBmp" Value="..\assets\installer-dialog.bmp" />
+    <WixVariable Id="WixUIBannerBmp" Value="..\assets\installer-banner.bmp" />
+    <Binary Id="MaintenanceRunner" SourceFile="$(var.ReleaseDirectory)\desktop-guard-maintenance.exe" />
+    <CustomAction Id="SetCommonDesktopFolder" Property="CommonDesktopFolder" Value="[DesktopFolder]" />
+    <CustomAction Id="SetCommonProgramsFolder" Property="CommonProgramsFolder" Value="[ProgramMenuFolder]" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="Desktop Guard Pro">
+        <Component Id="ApplicationFiles" Guid="{B6C95D29-D3CB-4458-BE16-CFE7A29BC308}">
+          <File Id="DesktopGuardService" Source="$(var.ReleaseDirectory)\\desktop-guard-service.exe" KeyPath="yes" />
+          <File Id="DesktopGuardUI" Source="$(var.ReleaseDirectory)\\desktop-guard-ui.exe" />
+          <File Id="DesktopGuardAgent" Source="$(var.ReleaseDirectory)\\desktop-guard-agent.exe" />
+          <File Id="DesktopGuardMaintenance" Source="$(var.ReleaseDirectory)\\desktop-guard-maintenance.exe" />
+          <File Id="DesktopGuardIcon" Source="..\\assets\\desktop-guard-pro.ico" />
+          <File Id="ReleaseManifest" Source="$(var.ReleaseDirectory)\\release-manifest.json" />
+          <File Id="ThirdPartyNotices" Source="..\\THIRD-PARTY-NOTICES.txt" />
+          </Component>
+        </Directory>
+      </Directory>
+      <Directory Id="CommonDesktopFolder" />
+      <Directory Id="CommonProgramsFolder">
+        <Directory Id="DesktopGuardProProgramsFolder" Name="Desktop Guard Pro" />
+      </Directory>
+    </Directory>
+
+    <DirectoryRef Id="CommonDesktopFolder">
+      <Component Id="DesktopShortcut" Guid="{8A258AD0-4D5D-47D1-88F4-A28572DD551B}">
+        <Shortcut
+          Id="DesktopGuardProShortcut"
+          Name="Desktop Guard Pro"
+          Target="[INSTALLFOLDER]desktop-guard-ui.exe"
+          WorkingDirectory="INSTALLFOLDER"
+          Icon="DesktopGuardProIcon" />
+        <RegistryValue
+          Root="HKLM"
+          Key="Software\Desktop Guard Pro"
+          Name="DesktopShortcut"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="DesktopGuardProProgramsFolder">
+      <Component Id="StartMenuShortcuts" Guid="{F472CB3B-59EE-4E47-9AD1-D2CC13193979}">
+          <Shortcut
+            Id="StartMenuDesktopGuardProShortcut"
+            Name="Desktop Guard Pro"
+            Target="[INSTALLFOLDER]desktop-guard-ui.exe"
+            WorkingDirectory="INSTALLFOLDER"
+            Icon="DesktopGuardProIcon" />
+          <Shortcut
+            Id="StartMenuUninstallShortcut"
+            Name="卸载 Desktop Guard Pro"
+            Target="[SystemFolder]msiexec.exe"
+            Arguments="/x [ProductCode]"
+            Icon="DesktopGuardProIcon" />
+          <RemoveFolder Id="RemoveDesktopGuardProProgramsFolder" On="uninstall" />
+          <RegistryValue
+            Root="HKLM"
+            Key="Software\Desktop Guard Pro"
+            Name="StartMenuShortcuts"
+            Type="integer"
+            Value="1"
+            KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="DesktopGuardPro" Title="Desktop Guard Pro" Level="1">
+      <ComponentRef Id="ApplicationFiles" />
+      <ComponentGroupRef Id="NativeUIRuntimeFiles" />
+      <ComponentRef Id="StartMenuShortcuts" />
+      <Feature Id="DesktopShortcutFeature" Title="桌面快捷方式" Description="在桌面创建 Desktop Guard Pro 快捷方式" Level="1" Absent="allow">
+        <ComponentRef Id="DesktopShortcut" />
+      </Feature>
+    </Feature>
+
+    <CustomAction
+      Id="ConfigureDesktopGuard"
+      BinaryKey="MaintenanceRunner"
+      ExeCommand='msi --stage apply --install-dir "[INSTALLFOLDER]." --data-dir "[CommonAppDataFolder]DesktopGuardPro" --owner-sid "[UserSID]" --transaction-id "[ProductCode]" --version "[ProductVersion]"'
+      Execute="deferred"
+      Impersonate="no"
+      Return="check" />
+    <CustomAction Id="PrepareDesktopGuard" BinaryKey="MaintenanceRunner"
+      ExeCommand='msi --stage prepare --install-dir "[INSTALLFOLDER]." --data-dir "[CommonAppDataFolder]DesktopGuardPro" --owner-sid "[UserSID]" --transaction-id "[ProductCode]" --version "[ProductVersion]"'
+      Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="RollbackDesktopGuard" BinaryKey="MaintenanceRunner"
+      ExeCommand='msi --stage rollback --install-dir "[INSTALLFOLDER]." --data-dir "[CommonAppDataFolder]DesktopGuardPro" --owner-sid "[UserSID]" --transaction-id "[ProductCode]" --version "[ProductVersion]"'
+      Execute="rollback" Impersonate="no" Return="check" />
+    <CustomAction Id="StopDesktopGuardRollback" BinaryKey="MaintenanceRunner"
+      ExeCommand='msi --stage stop-rollback --install-dir "[INSTALLFOLDER]." --data-dir "[CommonAppDataFolder]DesktopGuardPro" --owner-sid "[UserSID]" --transaction-id "[ProductCode]" --version "[ProductVersion]"'
+      Execute="rollback" Impersonate="no" Return="check" />
+    <CustomAction Id="CommitDesktopGuard" BinaryKey="MaintenanceRunner"
+      ExeCommand='msi --stage commit --install-dir "[INSTALLFOLDER]." --data-dir "[CommonAppDataFolder]DesktopGuardPro" --owner-sid "[UserSID]" --transaction-id "[ProductCode]" --version "[ProductVersion]"'
+      Execute="commit" Impersonate="no" Return="check" />
+    <CustomAction Id="RequireDesktopGuardRollback" Error="Desktop Guard Pro requires Windows Installer rollback to be enabled." />
+    <CustomAction
+      Id="LaunchDesktopGuardPro"
+      BinaryKey="WixCA"
+      DllEntry="WixShellExec"
+      Execute="immediate"
+      Impersonate="yes"
+      Return="check" />
+    <CustomAction
+      Id="RemoveDesktopGuard"
+      FileKey="DesktopGuardMaintenance"
+      ExeCommand='uninstall --data-dir "[CommonAppDataFolder]DesktopGuardPro" --owner-sid "[UserSID]" --data preserve --msi-managed'
+      Execute="deferred"
+      Impersonate="no"
+      Return="check" />
+
+    <UI Id="DesktopGuardProUI">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Microsoft YaHei UI" Size="9" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Microsoft YaHei UI" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Microsoft YaHei UI" Size="9" Bold="yes" />
+      <TextStyle Id="DesktopGuard_Title" FaceName="Microsoft YaHei UI" Size="12" Bold="yes" Red="8" Green="43" Blue="94" />
+
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+      <Property Id="WixUI_Mode" Value="InstallDir" />
+
+      <DialogRef Id="BrowseDlg" />
+      <DialogRef Id="DiskCostDlg" />
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+
+      <Dialog Id="DesktopGuardOptionsDlg" Width="370" Height="270" Title="[ProductName] 安装选项">
+        <Control Id="Title" Type="Text" X="20" Y="18" Width="330" Height="24" Transparent="yes" NoPrefix="yes" Text="{\DesktopGuard_Title}安装选项" />
+        <Control Id="Description" Type="Text" X="20" Y="50" Width="330" Height="30" Transparent="yes" NoPrefix="yes" Text="选择要随 Desktop Guard Pro 一起安装的桌面入口。" />
+        <Control Id="DesktopShortcutCheckBox" Type="CheckBox" X="24" Y="94" Width="310" Height="18" Property="CREATE_DESKTOP_SHORTCUT" CheckBoxValue="1" Text="在桌面创建快捷方式(&amp;D)" />
+        <Control Id="Separator" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="返回(&amp;B)" />
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="下一步(&amp;N)" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="取消" />
+      </Dialog>
+
+      <Publish Dialog="BrowseDlg" Control="OK" Event="DoAction" Value="WixUIValidatePath" Order="3">1</Publish>
+      <Publish Dialog="BrowseDlg" Control="OK" Event="SpawnDialog" Value="InvalidDirDlg" Order="4"><![CDATA[NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID<>"1"]]></Publish>
+
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchDesktopGuardPro" Order="1">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed</Publish>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999">1</Publish>
+
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg">NOT Installed</Publish>
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg">Installed AND PATCH</Publish>
+
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg">1</Publish>
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1">1</Publish>
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="DoAction" Value="WixUIValidatePath" Order="2">NOT WIXUI_DONTVALIDATEPATH</Publish>
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="SpawnDialog" Value="InvalidDirDlg" Order="3"><![CDATA[NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID<>"1"]]></Publish>
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="DesktopGuardOptionsDlg" Order="4">WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID="1"</Publish>
+      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1">1</Publish>
+      <Publish Dialog="InstallDirDlg" Control="ChangeFolder" Event="SpawnDialog" Value="BrowseDlg" Order="2">1</Publish>
+
+      <Publish Dialog="DesktopGuardOptionsDlg" Control="Back" Event="NewDialog" Value="InstallDirDlg" Order="1">1</Publish>
+      <Publish Dialog="DesktopGuardOptionsDlg" Control="Next" Event="AddLocal" Value="DesktopShortcutFeature" Order="1">CREATE_DESKTOP_SHORTCUT = "1"</Publish>
+      <Publish Dialog="DesktopGuardOptionsDlg" Control="Next" Event="Remove" Value="DesktopShortcutFeature" Order="2">CREATE_DESKTOP_SHORTCUT &lt;&gt; "1"</Publish>
+      <Publish Dialog="DesktopGuardOptionsDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="3">1</Publish>
+      <Publish Dialog="DesktopGuardOptionsDlg" Control="Cancel" Event="SpawnDialog" Value="CancelDlg">1</Publish>
+
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="DesktopGuardOptionsDlg" Order="1">NOT Installed</Publish>
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2">Installed AND NOT PATCH</Publish>
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="3">Installed AND PATCH</Publish>
+
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg">1</Publish>
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg">1</Publish>
+
+      <Property Id="ARPNOMODIFY" Value="1" />
+    </UI>
+    <UIRef Id="WixUI_Common" />
+
+    <InstallExecuteSequence>
+      <Custom Action="SetCommonDesktopFolder" Before="CostFinalize">1</Custom>
+      <Custom Action="SetCommonProgramsFolder" Before="CostFinalize">1</Custom>
+      <Custom Action="RequireDesktopGuardRollback" Before="RollbackDesktopGuard">NOT REMOVE AND NOT UPGRADINGPRODUCTCODE AND RollbackDisabled</Custom>
+      <Custom Action="RollbackDesktopGuard" Before="PrepareDesktopGuard">NOT REMOVE AND NOT UPGRADINGPRODUCTCODE</Custom>
+      <Custom Action="PrepareDesktopGuard" Before="InstallFiles">NOT REMOVE AND NOT UPGRADINGPRODUCTCODE</Custom>
+      <Custom Action="StopDesktopGuardRollback" After="InstallFiles">NOT REMOVE AND NOT UPGRADINGPRODUCTCODE</Custom>
+      <Custom Action="ConfigureDesktopGuard" After="StopDesktopGuardRollback">NOT REMOVE AND NOT UPGRADINGPRODUCTCODE</Custom>
+      <Custom Action="CommitDesktopGuard" After="ConfigureDesktopGuard">NOT REMOVE AND NOT UPGRADINGPRODUCTCODE</Custom>
+      <Custom Action="RemoveDesktopGuard" Before="RemoveFiles">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
+    </InstallExecuteSequence>
+  </Product>
+</Wix>

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://desktopguardpro.local/schemas/message.schema.json",
+  "title": "Desktop Guard Pro IPC message",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "requestId", "type", "deadlineUtc", "payload"],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "requestId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "health.get",
+        "health.result",
+        "session.create",
+        "session.transition",
+        "session.current.get",
+        "session.list",
+        "session.list.result",
+        "session.retention_lock.update",
+        "session.retention_lock.result",
+        "session.retention_prune",
+        "session.retention_prune.result",
+        "session.end_verification.create",
+        "session.end_verification.result",
+        "session.start_preview.get",
+        "session.start_preview.result",
+        "session.baseline_review.get",
+        "session.baseline_review.resolve",
+        "session.baseline_review.result",
+        "directory_monitoring.get",
+        "directory_monitoring.update",
+        "directory_monitoring.result",
+        "session.result",
+		"timeline.query",
+		"timeline.result",
+        "risk.evaluate",
+        "risk.result",
+        "risk.finding_status.update",
+        "risk.finding_status.result",
+        "asset_difference.query",
+        "asset_difference.result",
+        "agent.activity.report",
+        "agent.activity.result",
+        "report.export",
+        "report.result",
+        "report.chunk.get",
+        "report.chunk.result",
+        "error"
+      ]
+    },
+    "deadlineUtc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": true
+  }
+}

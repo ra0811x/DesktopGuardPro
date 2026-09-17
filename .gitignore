@@ -1,0 +1,35 @@
+# Go build and test output
+/bin/
+/build/bin/
+**/bin/
+**/obj/
+*.exe
+*.test
+coverage.out
+
+# Wails and frontend output
+/.wails/
+/frontend/dist/
+/frontend/node_modules/
+/frontend/.vite/
+/frontend/coverage/
+
+# Release and packaging output
+/dist/
+*.msi
+*.zip
+
+# Local runtime data
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# Local environment and editor state
+.env
+.env.*
+*.pfx
+*.p12
+*.pem
+.idea/
+.vscode/

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Application
+    x:Class="DesktopGuardPro.Native.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+            <FontFamily x:Key="DgpContentFontFamily">Microsoft YaHei UI</FontFamily>
+            <SolidColorBrush x:Key="DgpCanvasBrush" Color="#F3F7FC" />
+            <SolidColorBrush x:Key="DgpSidebarBrush" Color="#082B5E" />
+            <SolidColorBrush x:Key="DgpBrandBrush" Color="#0B3977" />
+            <SolidColorBrush x:Key="DgpInteractionBrush" Color="#0B5BB5" />
+            <SolidColorBrush x:Key="DgpNavigationSelectedBrush" Color="#14549B" />
+            <SolidColorBrush x:Key="DgpNavigationHoverBrush" Color="#10457F" />
+            <SolidColorBrush x:Key="DgpSurfaceBrush" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="DgpInformationBrush" Color="#EEF5FC" />
+            <SolidColorBrush x:Key="DgpPrimaryTextBrush" Color="#082B5E" />
+            <SolidColorBrush x:Key="DgpSecondaryTextBrush" Color="#294D78" />
+            <SolidColorBrush x:Key="DgpMutedTextBrush" Color="#46698F" />
+            <SolidColorBrush x:Key="DgpBorderBrush" Color="#BFD0E6" />
+            <SolidColorBrush x:Key="DgpFineBorderBrush" Color="#C5D5EB" />
+            <SolidColorBrush x:Key="DgpTitleBarTextBrush" Color="#FFFFFF" />
+            <Style TargetType="Button">
+                <Setter Property="FontSize" Value="11.2" />
+                <Setter Property="MinHeight" Value="28.8" />
+                <Setter Property="Padding" Value="7.2,4.8" />
+            </Style>
+            <Style TargetType="TextBox">
+                <Setter Property="FontSize" Value="11.2" />
+                <Setter Property="MinHeight" Value="28.8" />
+                <Setter Property="Padding" Value="7.2,4.8" />
+            </Style>
+            <Style TargetType="ComboBox">
+                <Setter Property="FontSize" Value="11.2" />
+                <Setter Property="MinHeight" Value="28.8" />
+                <Setter Property="Padding" Value="7.2,4.8" />
+            </Style>
+            <Style TargetType="ToggleSwitch">
+                <Setter Property="FontSize" Value="11.2" />
+                <Setter Property="MinHeight" Value="28.8" />
+            </Style>
+            <Style TargetType="CheckBox">
+                <Setter Property="FontSize" Value="11.2" />
+                <Setter Property="MinHeight" Value="28.8" />
+            </Style>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>
