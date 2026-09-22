@@ -1187,6 +1187,78 @@ func TestAPIRejectsStaleTemporaryInputControlVerification(t *testing.T) {
 	}
 }
 
+func TestAPITemporaryUnlockAcceptsSavedPasswordOrRecoveryInOneField(t *testing.T) {
+	for _, useRecovery := range []bool{false, true} {
+		t.Run(fmt.Sprintf("recovery=%v", useRecovery), func(t *testing.T) {
+			now := time.Now().UTC()
+			store := &memoryInputShieldCredentialStore{}
+			credentials := testInputShieldCredentialManager(store, &now)
+			recovery, err := credentials.SetPassword(context.Background(), []byte("saved-password"), true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A fresh manager reads the credentials saved by an earlier UI session.
+			credentials = testInputShieldCredentialManager(store, &now)
+			api := newAPIWithClock(NewCoordinator(), func() time.Time { return now })
+			api.authorizedUserSID = "owner"
+			api.newChallenge = func() (string, error) { return "unlock-task", nil }
+			api.SetInputShieldCredentialManager(credentials)
+			client := ClientIdentity{UserSID: "owner"}
+			policy := domain.DefaultMonitoringPolicy().InputShield
+			policy.CredentialMode = domain.InputShieldCredentialLocal
+			policy.AllowRecoveryCode = true
+			policy.MaxFailedUnlockAttempts = 2
+			started, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputControlStart, now,
+				InputControlStartRequest{Policy: policy, Indefinite: true}), client)
+			if err != nil || started.Type != contracts.MessageTypeInputControlResult {
+				t.Fatalf("start: %+v %v", started, err)
+			}
+			requested, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputControlStop, now,
+				map[string]any{"verify": true}), client)
+			var pending struct {
+				Enabled         bool `json:"enabled"`
+				UnlockRequested bool `json:"unlockRequested"`
+			}
+			decodeTestPayload(t, requested, &pending)
+			if err != nil || !pending.Enabled || !pending.UnlockRequested {
+				t.Fatalf("unlock button must request verification without releasing input: %+v %v", pending, err)
+			}
+			api.SetAgentExecutable(`C:\Program Files\DesktopGuardPro\desktop-guard-agent.exe`)
+			agent := client
+			agent.ImagePath = `C:\Program Files\DesktopGuardPro\desktop-guard-agent.exe`
+			acknowledged, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeAgentInputShieldReport, now,
+				AgentInputShieldReportRequest{SessionID: "unlock-task", Action: "unlock_requested", State: "verifying", HookRunning: true, ObservedUTC: now}), agent)
+			if err != nil || acknowledged.Type != contracts.MessageTypeAgentInputShieldResult || api.currentInputControl().UnlockRequested {
+				t.Fatalf("agent must consume unlock request once: %+v %v", acknowledged, err)
+			}
+			verify := func(secret string) contracts.Message {
+				response, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputShieldCredentialVerify, now,
+					map[string]any{"controlId": "unlock-task", "password": []byte(secret), "acceptRecovery": true}), client)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return response
+			}
+			assertAPIError(t, verify("incorrect"), ErrorCodeVerificationFailed)
+			if !api.currentInputControl().Enabled {
+				t.Fatal("wrong password released control")
+			}
+			secret := "saved-password"
+			if useRecovery {
+				secret = recovery
+			}
+			var result InputShieldCredentialResult
+			decodeTestPayload(t, verify(secret), &result)
+			if !result.Verified || api.currentInputControl().Enabled {
+				t.Fatalf("saved credential did not unlock: %+v", result)
+			}
+			if useRecovery && store.record.RecoveryCode != nil {
+				t.Fatal("recovery code was not consumed")
+			}
+		})
+	}
+}
+
 func TestAPITemporaryInputControlVerificationCannotReleaseReplacement(t *testing.T) {
 	now := time.Date(2026, time.September, 22, 10, 0, 0, 0, time.UTC)
 	verifier := &blockingInputShieldVerifier{started: make(chan struct{}), release: make(chan struct{})}

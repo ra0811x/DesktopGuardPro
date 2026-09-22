@@ -33,3 +33,19 @@ Check(drafts.Read("strict", "strict-saved") == "strict-saved", "drafts isolated 
 drafts.Keep("standard", "edited", "edited");
 Check(drafts.Read("standard", "new-server-value") == "new-server-value", "successful save clears draft");
 Console.WriteLine("PASS: per-mode drafts and successful save");
+
+var legacyInputPolicy = InputShieldPolicyInfo.CreateDefault() with
+{
+    BlockPhysicalKeyboard = false, BlockPhysicalMouse = false, BlockPointerMovement = false,
+    InjectedInputMode = "strict", CredentialMode = "windows", RestoreAfterRestart = true,
+    UnlockKeyCode = 85, UnlockTrigger = "tap", UnlockTapCount = 6,
+};
+var inputPolicy = legacyInputPolicy.ForTemporaryControl();
+Check(inputPolicy.CredentialMode == "local" && inputPolicy.AllowRecoveryCode,
+    "saved local password and recovery must work without selecting another credential mode");
+Check(inputPolicy.BlockPhysicalKeyboard && inputPolicy.BlockPhysicalMouse && inputPolicy.BlockPointerMovement &&
+    inputPolicy.InjectedInputMode == "compatible", "temporary control must match DeskGuard physical/injected behavior");
+Check(!inputPolicy.RestoreAfterRestart && inputPolicy.UnlockAction == "suspend", "unlock ends temporary control");
+Check(inputPolicy.UnlockKeyCode == 85 && inputPolicy.UnlockTrigger == "tap" && inputPolicy.UnlockTapCount == 6,
+    "configured unlock gesture must survive migration");
+Console.WriteLine("PASS: DeskGuard temporary input policy and saved password selection");

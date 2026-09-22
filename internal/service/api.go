@@ -162,11 +162,12 @@ type InputShieldCredentialUpdateRequest struct {
 }
 
 type InputShieldCredentialVerifyRequest struct {
-	ControlID string `json:"controlId"`
-	UserName  string `json:"userName,omitempty"`
-	Domain    string `json:"domain,omitempty"`
-	Password  []byte `json:"password"`
-	Recovery  bool   `json:"recovery"`
+	ControlID      string `json:"controlId"`
+	UserName       string `json:"userName,omitempty"`
+	Domain         string `json:"domain,omitempty"`
+	Password       []byte `json:"password"`
+	Recovery       bool   `json:"recovery"`
+	AcceptRecovery bool   `json:"acceptRecovery,omitempty"`
 }
 
 type InputShieldCredentialResult struct {
@@ -223,18 +224,19 @@ type InputControlStartRequest struct {
 }
 
 type InputControlResult struct {
-	ControlID     string                   `json:"controlId,omitempty"`
-	Source        string                   `json:"source,omitempty"`
-	Enabled       bool                     `json:"enabled"`
-	State         string                   `json:"state"`
-	StartedUTC    time.Time                `json:"startedUtc,omitempty"`
-	ExpiresUTC    time.Time                `json:"expiresUtc,omitempty"`
-	Indefinite    bool                     `json:"indefinite"`
-	Policy        domain.InputShieldPolicy `json:"policy"`
-	HookRunning   bool                     `json:"hookRunning"`
-	DroppedEvents uint64                   `json:"droppedEvents"`
-	ObservedUTC   time.Time                `json:"observedUtc,omitempty"`
-	Devices       []AgentInputShieldDevice `json:"devices,omitempty"`
+	UnlockRequested bool                     `json:"unlockRequested,omitempty"`
+	ControlID       string                   `json:"controlId,omitempty"`
+	Source          string                   `json:"source,omitempty"`
+	Enabled         bool                     `json:"enabled"`
+	State           string                   `json:"state"`
+	StartedUTC      time.Time                `json:"startedUtc,omitempty"`
+	ExpiresUTC      time.Time                `json:"expiresUtc,omitempty"`
+	Indefinite      bool                     `json:"indefinite"`
+	Policy          domain.InputShieldPolicy `json:"policy"`
+	HookRunning     bool                     `json:"hookRunning"`
+	DroppedEvents   uint64                   `json:"droppedEvents"`
+	ObservedUTC     time.Time                `json:"observedUtc,omitempty"`
+	Devices         []AgentInputShieldDevice `json:"devices,omitempty"`
 }
 
 type AgentActivityHandler func(context.Context, ClientIdentity, AgentActivityReportRequest) error
@@ -684,6 +686,9 @@ func (api *API) recordAgentInputShield(
 			Devices: append([]AgentInputShieldDevice(nil), payload.Devices...),
 		}
 		api.inputShieldStatusOwner = scope
+		if control.Source == "temporary" && payload.Action == "unlock_requested" {
+			api.inputControl.UnlockRequested = false
+		}
 	}
 	api.agentMutex.Unlock()
 	return api.response(request, contracts.MessageTypeAgentInputShieldResult, AgentInputShieldResult{SessionID: control.ControlID})
@@ -812,12 +817,22 @@ func (api *API) startInputControl(ctx context.Context, request contracts.Message
 }
 
 func (api *API) stopInputControl(request contracts.Message, client ClientIdentity) (contracts.Message, error) {
+	var payload struct {
+		Verify bool `json:"verify"`
+	}
+	if err := request.DecodePayload(&payload); err != nil {
+		return api.errorResponse(request, ErrorCodeInvalidPayload, "input control stop payload is invalid")
+	}
 	scope := client.Principal()
 	api.agentMutex.Lock()
 	if api.inputControlOwner == scope && api.inputControl.Enabled && api.inputControl.Source == "temporary" {
-		api.inputControl.Enabled = false
-		api.inputControl.State = "stopping"
-		api.inputShieldStatus = InputShieldStatusResult{}
+		if payload.Verify {
+			api.inputControl.UnlockRequested = true
+		} else {
+			api.inputControl.Enabled = false
+			api.inputControl.State = "stopping"
+			api.inputShieldStatus = InputShieldStatusResult{}
+		}
 	}
 	api.agentMutex.Unlock()
 	return api.response(request, contracts.MessageTypeInputControlResult, api.currentInputControlFor(scope))
@@ -1673,7 +1688,16 @@ func (api *API) verifyInputShieldCredentials(
 		if manager == nil {
 			return api.errorResponse(request, ErrorCodeInputShieldUnavailable, "input shield credentials are unavailable")
 		}
-		err := manager.Verify(ctx, principal, payload.Password, payload.Recovery, maximumFailures, lockout)
+		if payload.Recovery && !control.Policy.AllowRecoveryCode {
+			return api.errorResponse(request, ErrorCodeVerificationFailed, "recovery codes are disabled for this control")
+		}
+		var err error
+		if payload.AcceptRecovery && !payload.Recovery {
+			err = manager.VerifyPasswordOrRecovery(ctx, principal, payload.Password,
+				control.Policy.AllowRecoveryCode, maximumFailures, lockout)
+		} else {
+			err = manager.Verify(ctx, principal, payload.Password, payload.Recovery, maximumFailures, lockout)
+		}
 		if errors.Is(err, ErrInputShieldCredentialLocked) {
 			return api.errorResponse(request, ErrorCodeVerificationLocked, err.Error())
 		}

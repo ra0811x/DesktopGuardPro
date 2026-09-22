@@ -171,7 +171,8 @@ if ($appCode -notmatch 'Grid\.SetRow\(secondary,\s*useColumns\s*\?\s*0\s*:\s*1\)
 if (@([regex]::Matches($appCode, 'CreateWorkspaceCard\(')).Count -lt 10) {
     throw 'Analysis and settings pages must use the shared dashboard-style card.'
 }
-if (@([regex]::Matches($appCode, 'CreateBalancedDashboardColumns\(')).Count -lt 9) {
+# DeskGuard locks keyboard and mouse together; their former switch pair is a single description.
+if (@([regex]::Matches($appCode, 'CreateBalancedDashboardColumns\(')).Count -lt 8) {
     throw 'Dashboard, analysis and settings pages must provide balanced responsive rows.'
 }
 $sectionCard = [regex]::Match(

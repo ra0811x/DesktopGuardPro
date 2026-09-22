@@ -19,8 +19,8 @@ func TestWindowsInputShieldRuntimeStartsAndStopsInSafeOrder(t *testing.T) {
 	runtime := &windowsInputShieldRuntime{
 		client: client, newEngine: func() inputShieldEngine { return engine },
 		newOverlay: func() inputShieldOverlay { return overlay }, newTracker: func() inputShieldDeviceTracker { return tracker },
-		prompt: func(inputShieldEngine, domain.InputShieldPolicy) (coreservice.InputShieldCredentialVerifyRequest, error) {
-			return coreservice.InputShieldCredentialVerifyRequest{}, nil
+		prompt: func(context.Context, domain.InputShieldPolicy, inputShieldVerify) error {
+			return nil
 		}, pollInterval: time.Hour,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -63,8 +63,8 @@ func TestWindowsInputShieldRuntimeReportsDeviceInventoryWhileControlIsDisabled(t
 		client: client, newEngine: func() inputShieldEngine { return newFakeInputShieldEngine() },
 		newOverlay: func() inputShieldOverlay { return &fakeInputShieldOverlay{} },
 		newTracker: func() inputShieldDeviceTracker { return tracker },
-		prompt: func(inputShieldEngine, domain.InputShieldPolicy) (coreservice.InputShieldCredentialVerifyRequest, error) {
-			return coreservice.InputShieldCredentialVerifyRequest{}, nil
+		prompt: func(context.Context, domain.InputShieldPolicy, inputShieldVerify) error {
+			return nil
 		}, pollInterval: time.Hour,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -84,6 +84,53 @@ func TestWindowsInputShieldRuntimeReportsDeviceInventoryWhileControlIsDisabled(t
 	}
 }
 
+func TestInputShieldUnlockButtonUsesExistingDialogAndCancellation(t *testing.T) {
+	configuration := enabledInputShieldConfiguration()
+	configuration.UnlockRequested = true
+	client := &fakeInputShieldRuntimeClient{configuration: configuration}
+	engine := newFakeInputShieldEngine()
+	promptStarted := make(chan struct{}, 2)
+	promptCancelled := make(chan struct{})
+	runtime := &windowsInputShieldRuntime{
+		client: client, newEngine: func() inputShieldEngine { return engine },
+		newOverlay: func() inputShieldOverlay { return &fakeInputShieldOverlay{} },
+		newTracker: func() inputShieldDeviceTracker { return newFakeInputShieldDeviceTracker() },
+		prompt: func(ctx context.Context, _ domain.InputShieldPolicy, _ inputShieldVerify) error {
+			promptStarted <- struct{}{}
+			<-ctx.Done()
+			close(promptCancelled)
+			return ctx.Err()
+		}, pollInterval: 5 * time.Millisecond,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(ctx) }()
+	select {
+	case <-promptStarted:
+	case <-time.After(time.Second):
+		t.Fatal("unlock button did not open password dialog")
+	}
+	select {
+	case <-promptStarted:
+		t.Fatal("repeated polling opened a second password dialog")
+	case <-time.After(30 * time.Millisecond):
+	}
+	client.SetConfiguration(inputShieldSessionConfiguration{})
+	select {
+	case <-promptCancelled:
+	case <-time.After(time.Second):
+		t.Fatal("expired control left password dialog open")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !engine.stopped || engine.completeCalls != 0 {
+		t.Fatal("cancelled dialog changed the stopped engine")
+	}
+}
+
 func TestWindowsInputShieldRuntimeVerifiesUnlockAsynchronously(t *testing.T) {
 	client := &fakeInputShieldRuntimeClient{configuration: enabledInputShieldConfiguration()}
 	engine := newFakeInputShieldEngine()
@@ -91,8 +138,8 @@ func TestWindowsInputShieldRuntimeVerifiesUnlockAsynchronously(t *testing.T) {
 		client: client, newEngine: func() inputShieldEngine { return engine },
 		newOverlay: func() inputShieldOverlay { return &fakeInputShieldOverlay{} },
 		newTracker: func() inputShieldDeviceTracker { return newFakeInputShieldDeviceTracker() },
-		prompt: func(inputShieldEngine, domain.InputShieldPolicy) (coreservice.InputShieldCredentialVerifyRequest, error) {
-			return coreservice.InputShieldCredentialVerifyRequest{Password: []byte("correct-password")}, nil
+		prompt: func(_ context.Context, _ domain.InputShieldPolicy, verify inputShieldVerify) error {
+			return verify(coreservice.InputShieldCredentialVerifyRequest{Password: []byte("correct-password")})
 		}, pollInterval: time.Hour,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -127,10 +174,10 @@ func TestWindowsInputShieldRuntimeIgnoresVerificationForReplacedControl(t *testi
 		},
 		newOverlay: func() inputShieldOverlay { return &fakeInputShieldOverlay{} },
 		newTracker: func() inputShieldDeviceTracker { return newFakeInputShieldDeviceTracker() },
-		prompt: func(inputShieldEngine, domain.InputShieldPolicy) (coreservice.InputShieldCredentialVerifyRequest, error) {
+		prompt: func(_ context.Context, _ domain.InputShieldPolicy, verify inputShieldVerify) error {
 			close(promptStarted)
 			<-releasePrompt
-			return coreservice.InputShieldCredentialVerifyRequest{Password: []byte("correct-password")}, nil
+			return verify(coreservice.InputShieldCredentialVerifyRequest{Password: []byte("correct-password")})
 		},
 		pollInterval: 5 * time.Millisecond,
 	}
@@ -154,12 +201,9 @@ func TestWindowsInputShieldRuntimeIgnoresVerificationForReplacedControl(t *testi
 		t.Fatalf("control replacement first stopped=%v second started=%v", first.stopped, second.started)
 	}
 	close(releasePrompt)
-	verification := waitForInputShieldVerification(t, client)
-	if verification.ControlID != "session-1" {
-		t.Fatalf("verification control ID = %q, want session-1", verification.ControlID)
-	}
+
 	time.Sleep(20 * time.Millisecond)
-	if second.completeCalls != 0 || second.state != inputShieldProtecting {
+	if second.completeCalls != 0 || second.state != inputShieldProtecting || client.verifyCalls != 0 {
 		t.Fatalf("stale verification changed replacement engine: calls=%d state=%d", second.completeCalls, second.state)
 	}
 	cancel()
@@ -183,8 +227,8 @@ func TestWindowsInputShieldRuntimeReportsAndRestartsUnhealthyHook(t *testing.T) 
 		},
 		newOverlay: func() inputShieldOverlay { return &fakeInputShieldOverlay{} },
 		newTracker: func() inputShieldDeviceTracker { return newFakeInputShieldDeviceTracker() },
-		prompt: func(inputShieldEngine, domain.InputShieldPolicy) (coreservice.InputShieldCredentialVerifyRequest, error) {
-			return coreservice.InputShieldCredentialVerifyRequest{}, nil
+		prompt: func(context.Context, domain.InputShieldPolicy, inputShieldVerify) error {
+			return nil
 		}, pollInterval: 20 * time.Millisecond,
 	}
 	runtime.client.(*fakeInputShieldRuntimeClient).configuration.Policy.HookHeartbeatSeconds = 1
@@ -382,6 +426,13 @@ func (engine *fakeInputShieldEngine) Start(domain.InputShieldPolicy) error {
 func (engine *fakeInputShieldEngine) Stop() {
 	engine.stopped = true
 	engine.state = inputShieldDisabled
+}
+func (engine *fakeInputShieldEngine) RequestUnlock() {
+	if engine.state != inputShieldProtecting {
+		return
+	}
+	engine.state = inputShieldVerifying
+	engine.unlock <- struct{}{}
 }
 func (engine *fakeInputShieldEngine) Events() <-chan BlockedInputEvent { return engine.events }
 func (engine *fakeInputShieldEngine) UnlockRequests() <-chan struct{}  { return engine.unlock }

@@ -17,9 +17,10 @@ const (
 )
 
 type inputShieldSessionConfiguration struct {
-	SessionID string
-	Enabled   bool
-	Policy    domain.InputShieldPolicy
+	UnlockRequested bool
+	SessionID       string
+	Enabled         bool
+	Policy          domain.InputShieldPolicy
 }
 
 type inputShieldRuntimeClient interface {
@@ -37,6 +38,7 @@ type inputShieldEngine interface {
 	State() inputShieldState
 	Healthy() bool
 	CompleteVerification(bool)
+	RequestUnlock()
 }
 
 type inputShieldOverlay interface {
@@ -53,7 +55,7 @@ type inputShieldDeviceTracker interface {
 	Snapshot() []InputDeviceIdentity
 }
 
-type inputShieldPrompt func(inputShieldEngine, domain.InputShieldPolicy) (coreservice.InputShieldCredentialVerifyRequest, error)
+type inputShieldPrompt func(context.Context, domain.InputShieldPolicy, inputShieldVerify) error
 
 type inputShieldVerificationResult struct {
 	controlID  string
@@ -69,12 +71,14 @@ type windowsInputShieldRuntime struct {
 	prompt       inputShieldPrompt
 	pollInterval time.Duration
 
-	engine     inputShieldEngine
-	overlay    inputShieldOverlay
-	tracker    inputShieldDeviceTracker
-	active     bool
-	session    inputShieldSessionConfiguration
-	generation uint64
+	engine             inputShieldEngine
+	overlay            inputShieldOverlay
+	tracker            inputShieldDeviceTracker
+	active             bool
+	session            inputShieldSessionConfiguration
+	generation         uint64
+	verificationCancel context.CancelFunc
+	verifying          bool
 }
 
 func newWindowsInputShieldRuntime() *windowsInputShieldRuntime {
@@ -84,13 +88,7 @@ func newWindowsInputShieldRuntime() *windowsInputShieldRuntime {
 		newOverlay:   func() inputShieldOverlay { return newInputWarningOverlay() },
 		newTracker:   func() inputShieldDeviceTracker { return newInputDeviceTracker() },
 		pollInterval: inputShieldPolicyPollInterval,
-		prompt: func(engine inputShieldEngine, policy domain.InputShieldPolicy) (coreservice.InputShieldCredentialVerifyRequest, error) {
-			shield, ok := engine.(*windowsInputShield)
-			if !ok {
-				return coreservice.InputShieldCredentialVerifyRequest{}, errors.New("input shield verification target is unavailable")
-			}
-			return promptInputShieldCredentials(shield, policy)
-		},
+		prompt:       promptInputShieldCredentials,
 	}
 }
 
@@ -153,9 +151,15 @@ func (runtime *windowsInputShieldRuntime) Run(ctx context.Context) error {
 		case event := <-blockedEvents:
 			runtime.handleBlockedInput(ctx, event)
 		case <-unlockRequests:
+			if runtime.verifying {
+				continue
+			}
+			promptContext, cancel := context.WithCancel(ctx)
+			runtime.verificationCancel = cancel
+			runtime.verifying = true
 			runtime.report(ctx, "unlock_requested", nil, nil)
-			go runtime.verifyUnlock(ctx, verificationResults, runtime.session.SessionID, runtime.generation,
-				runtime.engine, runtime.session.Policy)
+			go runtime.verifyUnlock(promptContext, verificationResults, runtime.session.SessionID, runtime.generation,
+				runtime.session.Policy)
 		case result := <-verificationResults:
 			if !runtime.active || runtime.engine == nil || runtime.generation != result.generation ||
 				runtime.session.SessionID != result.controlID {
@@ -164,6 +168,11 @@ func (runtime *windowsInputShieldRuntime) Run(ctx context.Context) error {
 				continue
 			}
 			success := result.err == nil
+			runtime.verifying = false
+			if runtime.verificationCancel != nil {
+				runtime.verificationCancel()
+				runtime.verificationCancel = nil
+			}
 			runtime.engine.CompleteVerification(success)
 			action := "unlock_succeeded"
 			if !success {
@@ -188,6 +197,9 @@ func (runtime *windowsInputShieldRuntime) reconcile(ctx context.Context) {
 	}
 	if configuration.Enabled {
 		if runtime.active && runtime.session.SessionID == configuration.SessionID {
+			if configuration.UnlockRequested && !runtime.verifying {
+				runtime.engine.RequestUnlock()
+			}
 			return
 		}
 		if runtime.active {
@@ -250,6 +262,11 @@ func (runtime *windowsInputShieldRuntime) stopComponents(ctx context.Context, re
 	if !runtime.active {
 		return
 	}
+	if runtime.verificationCancel != nil {
+		runtime.verificationCancel()
+		runtime.verificationCancel = nil
+	}
+	runtime.verifying = false
 	runtime.engine.Stop()
 	runtime.active = false
 	runtime.generation++
@@ -347,15 +364,18 @@ func (runtime *windowsInputShieldRuntime) verifyUnlock(
 	result chan<- inputShieldVerificationResult,
 	controlID string,
 	generation uint64,
-	engine inputShieldEngine,
 	policy domain.InputShieldPolicy,
 ) {
-	request, err := runtime.prompt(engine, policy)
-	request.ControlID = controlID
-	if err == nil {
-		err = runtime.client.Verify(ctx, request)
-	}
-	clear(request.Password)
+	err := runtime.prompt(ctx, policy, func(request coreservice.InputShieldCredentialVerifyRequest) error {
+		defer clear(request.Password)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		request.ControlID = controlID
+		requestContext, cancel := context.WithTimeout(ctx, agentRequestTimeout)
+		defer cancel()
+		return runtime.client.Verify(requestContext, request)
+	})
 	verification := inputShieldVerificationResult{controlID: controlID, generation: generation, err: err}
 	select {
 	case result <- verification:
@@ -468,7 +488,8 @@ func (pipeInputShieldClient) Current(ctx context.Context) (inputShieldSessionCon
 }
 
 func inputShieldConfigurationFromControl(result coreservice.InputControlResult) inputShieldSessionConfiguration {
-	return inputShieldSessionConfiguration{SessionID: result.ControlID, Enabled: result.Enabled, Policy: result.Policy}
+	return inputShieldSessionConfiguration{SessionID: result.ControlID, Enabled: result.Enabled, Policy: result.Policy,
+		UnlockRequested: result.UnlockRequested}
 }
 
 func (pipeInputShieldClient) Report(ctx context.Context, report coreservice.AgentInputShieldReportRequest) error {

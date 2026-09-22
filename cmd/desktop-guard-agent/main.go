@@ -1,5 +1,7 @@
 package main
 
+//go:generate rsrc -manifest agent.manifest -arch amd64 -o rsrc_windows_amd64.syso
+
 import (
 	"context"
 	"log"

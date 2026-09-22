@@ -4,22 +4,24 @@ Desktop Guard Pro 是面向 Windows x64 的本机保护与审计应用。它通�
 用户会话代理、原生桌面界面和维护程序，记录保护期间的文件、进程、软件、设备、
 账户和系统配置变化，并提供风险分析、完整性校验和报告导出。
 
-本文按 2026 年 9 月 22 日的工作区源码和 `2.11.37` 发布物核对。当前安装包使用
+本文按 2026 年 9 月 22 日的工作区源码和 `2.11.38` 发布物核对。当前安装包使用
 测试代码签名证书，适合开发、测试和验收环境。
 
 ## 当前版本
 
-当前发布版本为 `2.11.37`，安装包位于项目的 `dist/releases` 目录。该版本将历史
-会话、审计结果、风险分析、资产差异、报告导出和系统设置统一为仪表盘的设计风格，
-调整卡片、按钮、会话栏和自适应布局，并保留会话关联、筛选、导出和模式草稿功能。
+当前发布版本为 `2.11.38`，安装包位于项目的 `dist/releases` 目录。本版直接复用
+DeskGuard 的键鼠钩子、解锁状态机、密码窗口和输入法处理，接通此前保存的本地
+密码与恢复码，并保留七个页面的统一设计及会话关联。
 发布目录保存安装包、构建回执和源码包；历史版本也可从 GitHub Releases 获取。
 
 - 安装包：
-  [`DesktopGuardPro-2.11.37-windows-amd64.msi`](dist/releases/DesktopGuardPro-2.11.37-windows-amd64.msi)
+  [`DesktopGuardPro-2.11.38-windows-amd64.msi`](dist/releases/DesktopGuardPro-2.11.38-windows-amd64.msi)
 - 构建回执：
-  [`DesktopGuardPro-2.11.37-windows-amd64.msi.build.json`](dist/releases/DesktopGuardPro-2.11.37-windows-amd64.msi.build.json)
+  [`DesktopGuardPro-2.11.38-windows-amd64.msi.build.json`](dist/releases/DesktopGuardPro-2.11.38-windows-amd64.msi.build.json)
+- 发布说明：[2.11.38](RELEASE_NOTES-2.11.38.md)
+- 下载页面：[GitHub Release](https://github.com/ra0811x/DesktopGuardPro/releases/tag/v2.11.38)
 - SHA-256：
-  `B06B192CC7749CDF12BD5D1A71BE37E87F7D5C47139B1DCCE5E18BE51C443BF0`
+  `871D056E743AD3D78BC40E0DE60E91D3D5A881E49131FC827AAD8776C8C764B8`
 - 签名者：`CN=Desktop Guard Pro Test Signing`
 - 证书指纹：`E20E6C2B305777D52341C14E2DC67E0A2E1522FD`
 
@@ -28,9 +30,9 @@ Desktop Guard Pro 是面向 Windows x64 的本机保护与审计应用。它通�
 
 ## 产品能力
 
-工作区验收矩阵记录了早期 FR-001 至 FR-097 共 72 条功能需求。该矩阵尚未覆盖
-`2.11.37` 的全部模式配置与临时输入控制场景。涉及 Windows 版本、管理员权限、
-硬件和异常恢复的场景仍需在目标设备验证。详细条件见
+工作区验收矩阵保留 FR-001 至 FR-097 共 72 条历史功能需求，并记录七个模块与
+`2.11.38` 临时输入控制的验证结果。涉及 Windows 版本、管理员权限、硬件和异常
+恢复的场景仍需在目标设备验证。详细条件见
 [`docs/requirements-acceptance-matrix.md`](docs/requirements-acceptance-matrix.md)。
 
 主要能力包括：
@@ -38,7 +40,7 @@ Desktop Guard Pro 是面向 Windows x64 的本机保护与审计应用。它通�
 - 创建、命名、启动、暂停、恢复、结束保护会话，并在服务重启后识别未完成会话。
 - 每次启动从宽松、标准、严格和自定义模式中选择，预览本次功能、权限和资源影响。
 - 在 **系统设置** 分别查看、编辑、保存或重置四种模式的模块和详细审计策略。
-- 独立启动键盘、鼠标或键鼠控制，可定时释放，也可持续到验证解锁。
+- 独立锁定本地键盘和鼠标，可定时释放，也可使用本地密码或恢复码解锁。
 - 配置本地文件、文件夹和可移动卷，并为每条目录规则设置递归状态。
 - 按路径、文件名、扩展名和进程维护排除规则。
 - 记录文件创建、写入、截断、删除、重命名和内容哈希变化。
@@ -121,11 +123,15 @@ Ctrl+Alt+Delete 的安全桌面。
 
 ### 独立临时输入控制
 
-在 **仪表盘** 的 **临时输入控制** 区域，可分别选择禁用本地键盘、本地鼠标，
-或同时禁用两者。结束方式可选择 1–480 分钟后自动释放，或持续到验证解锁。默认
-按 **Ctrl+Alt+Space** 呼出身份验证窗口。触发后键盘和鼠标会临时放开 20 秒，
-供你输入凭据；密码验证成功、手动停止或定时到期后，代理会释放本地输入。服务
-或系统重启后不会自动重新锁定。
+在 **仪表盘** 的 **临时输入控制** 区域，启动后统一锁定本地键盘和鼠标，
+远程注入输入保持可用。首次使用时需设置本地密码，已保存的密码可直接使用。
+结束方式可选择 1–480 分钟后自动释放，或持续到验证解锁。默认按
+**Ctrl+Alt+Space** 或点击 **解除锁定** 打开密码窗口；密码和恢复码在同一输入框
+验证。窗口打开期间键鼠保持可用，取消后恢复锁定，验证成功或定时到期后释放。
+服务或系统重启后不会自动重新锁定。
+
+钩子引擎、解锁状态机、密码窗口及输入法处理复用 DeskGuard 源码，位于
+`internal/deskguard`。服务适配层沿用本项目的凭据存储，兼容此前保存的密码。
 
 临时输入控制可以在没有保护会话时运行，不会自动启动文件、网络、USB 或用户活动
 审计。它与保护会话并行时，两条生命周期彼此独立。临时控制运行期间，用户会话
@@ -194,7 +200,7 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 1. 结束正在进行的保护会话。
 2. 关闭 Desktop Guard Pro 主窗口。
 3. 打开
-   [`DesktopGuardPro-2.11.37-windows-amd64.msi`](dist/releases/DesktopGuardPro-2.11.37-windows-amd64.msi)。
+   [`DesktopGuardPro-2.11.38-windows-amd64.msi`](dist/releases/DesktopGuardPro-2.11.38-windows-amd64.msi)。
 4. 确认管理员权限和测试发布者提示。
 5. 选择安装目录和桌面快捷方式选项。
 6. 等待服务安装、启动和健康检查完成。
@@ -228,7 +234,7 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 当前发布流程从
 `native/DesktopGuardPro.Native/DesktopGuardPro.Native.csproj` 生成桌面界面。
 `frontend/` 和 `cmd/desktop-guard-ui/` 保留用于兼容与自动化验证，不会作为
-`2.11.37` MSI 的主界面载入。
+`2.11.38` MSI 的主界面载入。
 
 ## 开发环境
 
@@ -255,7 +261,7 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 
 ```powershell
 go run ./cmd/desktop-guard-release `
-  --version 2.11.37 `
+  --version 2.11.38 `
   --output dist\staging
 ```
 
@@ -272,7 +278,7 @@ dotnet build `
 
 ```powershell
 $msiArguments = @{
-  Version = '2.11.37'
+  Version = '2.11.38'
   OutputDirectory = 'dist\releases'
   CertificateStore = 'LocalMachine'
   CertificateThumbprint = '<certificate-thumbprint>'
@@ -304,8 +310,8 @@ go vet ./...
 
 $nativeUiTest = @{
   ExecutablePath = `
-    'dist\staging\DesktopGuardPro-2.11.37-windows-amd64\desktop-guard-ui.exe'
-  ExpectedVersion = '2.11.37'
+    'dist\staging\DesktopGuardPro-2.11.38-windows-amd64\desktop-guard-ui.exe'
+  ExpectedVersion = '2.11.38'
 }
 .\scripts\test-native-ui-release.ps1 @nativeUiTest
 ```
@@ -335,11 +341,12 @@ go test ./internal/storage -run TestStorageScale -count=1
 Remove-Item Env:DGP_STORAGE_SCALE_TEST
 ```
 
-`2.11.37` 的原生界面 Release 编译、会话选择、过期响应、分页、导出范围和
-模式草稿状态测试通过，界面结构、程序清单、启动检查与 MSI 发布门禁通过。
-发布包经过 WiX/ICE、
-组件和 MSI 的 Authenticode 签名、产品版本及构建回执 SHA-256 核对。
-本次改动集中在原生界面，未重复后端全量回归及目标设备安装、升级演练。
+`2.11.38` 的代理、服务、DeskGuard 钩子、原生状态回归和 Release 构建通过；
+服务与钩子的 Go race 检查通过。已运行代理占用全局互斥锁，因此代理全包测试
+跳过该互斥用例。真实密码窗口通过正确密码、输错后重试、取消、到期关闭和
+错误提示期间到期关闭五项检查；检查使用测试密码，未锁定真实键鼠。
+发布包经过 MSI 门禁、WiX/ICE、四个组件与 MSI 签名、产品版本和构建回执
+SHA-256 核对。目标设备安装升级及真实键鼠锁定、远程输入仍待实机验收。
 
 ## 已知限制
 

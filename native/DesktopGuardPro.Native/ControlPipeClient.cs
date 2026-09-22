@@ -162,10 +162,10 @@ internal sealed class ControlPipeClient
             TimeSpan.FromSeconds(3), cancellationToken);
     }
 
-    public async Task<InputControlResult> StopInputControlAsync(CancellationToken cancellationToken)
+    public async Task<InputControlResult> RequestInputControlUnlockAsync(CancellationToken cancellationToken)
     {
         return await CallAsync<InputControlResult>(
-            "input_control.stop", new { }, "input_control.result",
+            "input_control.stop", new { verify = true }, "input_control.result",
             TimeSpan.FromSeconds(3), cancellationToken);
     }
 

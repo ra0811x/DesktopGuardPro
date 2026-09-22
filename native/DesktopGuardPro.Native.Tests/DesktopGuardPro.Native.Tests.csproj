@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../DesktopGuardPro.Native/AnalysisWorkspace.cs" Link="AnalysisWorkspace.cs" />
+    <Compile Include="../DesktopGuardPro.Native/ControlMessage.cs" Link="ControlMessage.cs" />
   </ItemGroup>
 </Project>

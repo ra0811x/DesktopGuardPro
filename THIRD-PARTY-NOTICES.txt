@@ -220,6 +220,56 @@ Copyright (c) 2024 Alex Garcia
 
 The sqlite-vec material is available under the MIT license reproduced above.
 
+DeskGuard (Computer Security)
+----------------------------
+
+Source supplied by the project owner: Computer Security/src
+Source revision: ee5aecdc91450dca44847ba05e72f4b8039ad8cd
+Reused files: internal/hook/hook_windows.go, tap_windows_test.go,
+describe_windows_test.go, internal/gui/ime_windows.go, and the passwordDialog,
+prepDialog and centerTopmost functions from internal/gui/gui_windows.go.
+Located in internal/deskguard. The hook engine is copied unchanged; the dialog
+adapts the package, window owner, credential provider and control-lifetime
+cancellation.
+
+Walk and win
+------------
+
+github.com/lxn/walk v0.0.0-20210112085537-c389da54e794
+Copyright (c) 2010 The Walk Authors. All rights reserved.
+github.com/lxn/win v0.0.0-20210218163916-a377121e959e
+Copyright (c) 2010 The win Authors. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+3. The names of the authors may not be used to endorse or promote products
+   derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+govaluate
+---------
+
+gopkg.in/Knetic/govaluate.v3 v3.0.0
+Copyright (c) 2014-2016 George Lester
+
+The govaluate material is available under the MIT license reproduced above.
+
 Wails Runtime 3.0.0-beta.12
 https://github.com/wailsapp/wails
 

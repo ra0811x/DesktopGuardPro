@@ -140,6 +140,22 @@ func (manager *InputShieldCredentialManager) Verify(
 	maximumFailures int,
 	lockout time.Duration,
 ) error {
+	return manager.verify(ctx, principal, secret, recovery, false, maximumFailures, lockout)
+}
+
+// VerifyPasswordOrRecovery follows Computer Security's single-field unlock flow
+// while retaining the existing encrypted password store and one-time recovery.
+func (manager *InputShieldCredentialManager) VerifyPasswordOrRecovery(
+	ctx context.Context, principal string, secret []byte, allowRecovery bool,
+	maximumFailures int, lockout time.Duration,
+) error {
+	return manager.verify(ctx, principal, secret, false, allowRecovery, maximumFailures, lockout)
+}
+
+func (manager *InputShieldCredentialManager) verify(
+	ctx context.Context, principal string, secret []byte, recovery, acceptRecovery bool,
+	maximumFailures int, lockout time.Duration,
+) error {
 	defer clear(secret)
 	if manager == nil || manager.store == nil || ctx == nil || ctx.Err() != nil || strings.TrimSpace(principal) == "" {
 		return ErrInputShieldCredentialInvalid
@@ -168,7 +184,14 @@ func (manager *InputShieldCredentialManager) Verify(
 		secret = []byte(normalizeInputShieldRecoveryCode(string(secret)))
 		defer clear(secret)
 	}
-	if !verifyInputShieldSecret(secret, verifier) {
+	matched := verifyInputShieldSecret(secret, verifier)
+	if !matched && !recovery && acceptRecovery && record.RecoveryCode != nil {
+		recoverySecret := []byte(normalizeInputShieldRecoveryCode(string(secret)))
+		matched = verifyInputShieldSecret(recoverySecret, *record.RecoveryCode)
+		clear(recoverySecret)
+		recovery = matched
+	}
+	if !matched {
 		if manager.recordFailure(principal, maximumFailures, lockout, now) {
 			return ErrInputShieldCredentialLocked
 		}

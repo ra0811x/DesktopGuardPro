@@ -168,6 +168,18 @@ internal sealed record InputShieldPolicyInfo(
     [property: JsonPropertyName("restoreAfterRestart")] bool RestoreAfterRestart,
     [property: JsonPropertyName("hookHeartbeatSeconds")] int HookHeartbeatSeconds)
 {
+    internal InputShieldPolicyInfo ForTemporaryControl() => this with
+    {
+        BlockPhysicalKeyboard = true,
+        BlockPhysicalMouse = true,
+        BlockPointerMovement = true,
+        InjectedInputMode = "compatible",
+        CredentialMode = "local",
+        AllowRecoveryCode = true,
+        RestoreAfterRestart = false,
+        UnlockAction = "suspend",
+    };
+
     internal static InputShieldPolicyInfo CreateDefault() => new(
         true, true, true, "compatible", true, 5,
         "检测到本地键盘或鼠标输入，当前设备处于保护状态。",
