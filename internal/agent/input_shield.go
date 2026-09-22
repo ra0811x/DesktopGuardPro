@@ -3,9 +3,12 @@ package agent
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"desktopguardpro/internal/domain"
 )
+
+const inputShieldVerificationGracePeriod = 20 * time.Second
 
 type inputShieldState uint32
 
@@ -49,10 +52,11 @@ type inputShieldController struct {
 	policy atomic.Pointer[domain.InputShieldPolicy]
 	state  atomic.Uint32
 
-	mu            sync.Mutex
-	keyDown       [256]bool
-	tapCount      int
-	lastTapTimeMS uint32
+	mu                     sync.Mutex
+	keyDown                [256]bool
+	tapCount               int
+	lastTapTimeMS          uint32
+	verificationGraceUntil atomic.Int64
 }
 
 func newInputShieldController() *inputShieldController {
@@ -69,28 +73,52 @@ func (controller *inputShieldController) Protect(policy domain.InputShieldPolicy
 	controller.tapCount = 0
 	controller.lastTapTimeMS = 0
 	controller.mu.Unlock()
+	controller.verificationGraceUntil.Store(0)
 	controller.state.Store(uint32(inputShieldProtecting))
 }
 
 func (controller *inputShieldController) Disable() {
 	controller.state.Store(uint32(inputShieldDisabled))
+	controller.verificationGraceUntil.Store(0)
+	controller.resetInputTracking()
 }
 
 func (controller *inputShieldController) BeginVerification() bool {
-	return controller.state.CompareAndSwap(uint32(inputShieldProtecting), uint32(inputShieldVerifying))
+	if !controller.state.CompareAndSwap(uint32(inputShieldProtecting), uint32(inputShieldVerifying)) {
+		return false
+	}
+	// The unlock chord's key-up messages arrive while verification is active.
+	// Clear the pre-verification state so those blocked messages cannot leave
+	// Ctrl, Alt, or the unlock key falsely marked as held after a failed prompt.
+	controller.resetInputTracking()
+	// A credential prompt cannot safely be completed if its own keyboard or
+	// pointer input is caught by the global hook. Let all local input through for
+	// a short, fixed window; after it expires the prompt remains the only allowed
+	// target until verification completes.
+	controller.verificationGraceUntil.Store(time.Now().Add(inputShieldVerificationGracePeriod).UnixNano())
+	return true
 }
 
 func (controller *inputShieldController) CompleteVerification(success bool) {
 	policy := controller.policy.Load()
 	if !success {
-		controller.state.CompareAndSwap(uint32(inputShieldVerifying), uint32(inputShieldProtecting))
+		if controller.state.CompareAndSwap(uint32(inputShieldVerifying), uint32(inputShieldProtecting)) {
+			controller.verificationGraceUntil.Store(0)
+			controller.resetInputTracking()
+		}
 		return
 	}
 	if policy != nil && policy.UnlockAction == domain.InputShieldUnlockActionEndSession {
-		controller.state.Store(uint32(inputShieldDisabled))
+		if controller.state.CompareAndSwap(uint32(inputShieldVerifying), uint32(inputShieldDisabled)) {
+			controller.verificationGraceUntil.Store(0)
+			controller.resetInputTracking()
+		}
 		return
 	}
-	controller.state.Store(uint32(inputShieldSuspended))
+	if controller.state.CompareAndSwap(uint32(inputShieldVerifying), uint32(inputShieldSuspended)) {
+		controller.verificationGraceUntil.Store(0)
+		controller.resetInputTracking()
+	}
 }
 
 func (controller *inputShieldController) Resume() bool {
@@ -114,11 +142,21 @@ func (controller *inputShieldController) Decide(event shieldInputEvent) shieldIn
 	if state != inputShieldProtecting && state != inputShieldVerifying {
 		return shieldInputDecision{}
 	}
+	if state == inputShieldVerifying && controller.verificationGraceActive() {
+		return shieldInputDecision{}
+	}
 	if state == inputShieldVerifying && event.VerificationTarget {
 		return shieldInputDecision{}
 	}
+	decision := shieldInputDecision{}
+	if event.Kind == shieldInputKeyboard && !event.Injected {
+		firstDown := controller.updateKeyState(event.KeyCode, event.Down)
+		if firstDown && controller.matchesUnlock(policy, event) && controller.BeginVerification() {
+			decision.TriggerUnlock = true
+		}
+	}
 	if !controller.inputEnabled(policy, event) {
-		return shieldInputDecision{}
+		return decision
 	}
 	if event.Injected {
 		switch policy.InjectedInputMode {
@@ -131,19 +169,17 @@ func (controller *inputShieldController) Decide(event shieldInputEvent) shieldIn
 		}
 	}
 
-	decision := shieldInputDecision{Block: true}
+	decision.Block = true
 	if state == inputShieldVerifying {
 		return decision
-	}
-	if event.Kind == shieldInputKeyboard && !event.Injected {
-		firstDown := controller.updateKeyState(event.KeyCode, event.Down)
-		if firstDown && controller.matchesUnlock(policy, event) && controller.BeginVerification() {
-			decision.TriggerUnlock = true
-		}
 	}
 	decision.Record = policy.RecordBlockedInputCategory && controller.isRecordable(event)
 	decision.Notify = controller.isRecordable(event)
 	return decision
+}
+
+func (controller *inputShieldController) verificationGraceActive() bool {
+	return time.Now().UnixNano() < controller.verificationGraceUntil.Load()
 }
 
 func (*inputShieldController) inputEnabled(policy *domain.InputShieldPolicy, event shieldInputEvent) bool {
@@ -168,6 +204,14 @@ func (controller *inputShieldController) updateKeyState(keyCode int, down bool) 
 	firstDown := down && !controller.keyDown[keyCode]
 	controller.keyDown[keyCode] = down
 	return firstDown
+}
+
+func (controller *inputShieldController) resetInputTracking() {
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	controller.keyDown = [256]bool{}
+	controller.tapCount = 0
+	controller.lastTapTimeMS = 0
 }
 
 func (controller *inputShieldController) matchesUnlock(policy *domain.InputShieldPolicy, event shieldInputEvent) bool {

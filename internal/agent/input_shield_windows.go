@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"desktopguardpro/internal/domain"
@@ -28,6 +29,7 @@ const (
 	windowsKeyboardLowerIL      = 0x02
 	windowsMouseInjected        = 0x01
 	windowsMouseLowerIL         = 0x02
+	inputShieldStopTimeout      = 5 * time.Second
 )
 
 var (
@@ -127,15 +129,24 @@ func (shield *windowsInputShield) Stop() {
 	threadID := shield.threadID.Load()
 	stopped := shield.stopped
 	shield.mu.Unlock()
+	// Stop blocking before waiting for the hook thread. A failed or delayed
+	// thread message must not leave the current user without input.
+	shield.controller.Disable()
 	if threadID != 0 {
 		inputShieldPostThreadMessage.Call(uintptr(threadID), windowsMessageQuit, 0, 0)
 	}
-	<-stopped
+	select {
+	case <-stopped:
+		activeWindowsInputShield.CompareAndSwap(shield, nil)
+	case <-time.After(inputShieldStopTimeout):
+		// Keep this shield registered until its hook thread really exits. That
+		// prevents a replacement from installing a second global callback while
+		// this one is still alive. Its controller is already disabled, so the
+		// remaining callback passes every event through.
+	}
 	shield.mu.Lock()
 	shield.running = false
 	shield.mu.Unlock()
-	activeWindowsInputShield.CompareAndSwap(shield, nil)
-	shield.controller.Disable()
 }
 
 func (shield *windowsInputShield) Events() <-chan BlockedInputEvent { return shield.events }
@@ -168,6 +179,7 @@ func (shield *windowsInputShield) runHooks(started chan<- error, stopped chan<- 
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	defer close(stopped)
+	defer activeWindowsInputShield.CompareAndSwap(shield, nil)
 
 	threadID := windows.GetCurrentThreadId()
 	shield.threadID.Store(threadID)
@@ -186,6 +198,11 @@ func (shield *windowsInputShield) runHooks(started chan<- error, stopped chan<- 
 		return
 	}
 	defer unhookWindowsHookEx.Call(mouseHook)
+	// Create the message queue before declaring the hook available. Without
+	// this, a rapid Stop can post WM_QUIT before the queue exists and wait
+	// forever for a thread that never receives it.
+	var queued windowsMessage
+	peekMessage.Call(uintptr(unsafe.Pointer(&queued)), 0, 0, 0, 0)
 	started <- nil
 
 	var message windowsMessage

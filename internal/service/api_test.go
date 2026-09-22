@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,6 +34,153 @@ func TestAPIHealthGet(t *testing.T) {
 	}
 	if result.Session != nil {
 		t.Fatalf("health session = %#v, want nil", result.Session)
+	}
+}
+
+func TestAPIExposesAgentDeviceInventoryWithoutActiveInputControl(t *testing.T) {
+	api, now := newTestAPI()
+	api.SetAgentExecutable(`C:\Program Files\Desktop Guard Pro\desktop-guard-agent.exe`)
+	report := AgentInputShieldReportRequest{
+		SessionID: "device-inventory", Action: "inventory", State: "disabled", ObservedUTC: now,
+		Devices: []AgentInputShieldDevice{{
+			Kind: "keyboard", InterfacePath: `\\?\HID#VID_1234&PID_5678`, InstanceID: `HID\VID_1234&PID_5678\1`,
+			VendorID: "1234", ProductID: "5678", Active: true,
+		}},
+	}
+	client := ClientIdentity{UserSID: "inventory-owner", WindowsSessionID: 2,
+		ImagePath: `c:\program files\desktop guard pro\DESKTOP-GUARD-AGENT.EXE`}
+	if _, err := api.HandleForClient(
+		newTestMessage(t, contracts.MessageTypeAgentInputShieldReport, now, report), client,
+	); err != nil {
+		t.Fatalf("device inventory report error = %v", err)
+	}
+	response, err := api.HandleForClient(
+		newTestMessage(t, contracts.MessageTypeInputShieldStatusGet, now, struct{}{}), client,
+	)
+	if err != nil {
+		t.Fatalf("device inventory status error = %v", err)
+	}
+	var status InputShieldStatusResult
+	decodeTestPayload(t, response, &status)
+	if status.State != "disabled" || len(status.Devices) != 1 || status.Devices[0].InstanceID != report.Devices[0].InstanceID {
+		t.Fatalf("device inventory status = %+v", status)
+	}
+}
+
+func TestAPIDeviceInventoryIsScopedToWindowsSession(t *testing.T) {
+	now := time.Date(2026, time.September, 22, 13, 0, 0, 0, time.UTC)
+	api := &API{coordinator: NewCoordinator(), now: func() time.Time { return now }}
+	api.SetAgentExecutable(`C:\Program Files\DesktopGuardPro\desktop-guard-agent.exe`)
+	clients := []ClientIdentity{
+		{UserSID: "owner", WindowsSessionID: 2, ImagePath: `C:\Program Files\DesktopGuardPro\desktop-guard-agent.exe`},
+		{UserSID: "owner", WindowsSessionID: 3, ImagePath: `C:\Program Files\DesktopGuardPro\desktop-guard-agent.exe`},
+	}
+	for index, client := range clients {
+		device := AgentInputShieldDevice{Kind: "keyboard", InstanceID: fmt.Sprintf("keyboard-%d", index)}
+		response, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeAgentInputShieldReport, now,
+			AgentInputShieldReportRequest{
+				SessionID: "device-inventory", Action: "inventory", State: "disabled",
+				ObservedUTC: now, Devices: []AgentInputShieldDevice{device},
+			}), client)
+		if err != nil || response.Type != contracts.MessageTypeAgentInputShieldResult {
+			t.Fatalf("inventory report for session %d = %+v, error = %v", client.WindowsSessionID, response, err)
+		}
+	}
+	for index, client := range clients {
+		response, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputShieldStatusGet,
+			now, struct{}{}), client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var status InputShieldStatusResult
+		decodeTestPayload(t, response, &status)
+		want := fmt.Sprintf("keyboard-%d", index)
+		if len(status.Devices) != 1 || status.Devices[0].InstanceID != want {
+			t.Fatalf("inventory for session %d = %+v, want %q", client.WindowsSessionID, status.Devices, want)
+		}
+	}
+}
+
+func TestAPIExposesDeviceInventoryWhileActiveDeviceTrackingIsDisabled(t *testing.T) {
+	now := time.Date(2026, time.September, 22, 13, 30, 0, 0, time.UTC)
+	api := &API{
+		coordinator: NewCoordinator(), now: func() time.Time { return now }, authorizedUserSID: "owner",
+		newChallenge: func() (string, error) { return "untracked-device-control", nil },
+	}
+	api.SetAgentExecutable(`C:\Program Files\DesktopGuardPro\desktop-guard-agent.exe`)
+	client := ClientIdentity{UserSID: "owner", WindowsSessionID: 2,
+		ImagePath: `C:\Program Files\DesktopGuardPro\desktop-guard-agent.exe`}
+	device := AgentInputShieldDevice{Kind: "mouse", InstanceID: "mouse-1"}
+	if _, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeAgentInputShieldReport, now,
+		AgentInputShieldReportRequest{
+			SessionID: "device-inventory", Action: "inventory", State: "disabled",
+			ObservedUTC: now, Devices: []AgentInputShieldDevice{device},
+		}), client); err != nil {
+		t.Fatal(err)
+	}
+	policy := domain.DefaultMonitoringPolicy().InputShield
+	policy.TrackActiveDevices = false
+	policy.WarnOnDeviceArrival = false
+	policy.RecordDeviceRemoval = false
+	started, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputControlStart, now,
+		InputControlStartRequest{Policy: policy, Indefinite: true}), client)
+	if err != nil || started.Type != contracts.MessageTypeInputControlResult {
+		t.Fatalf("input control start = %+v, error = %v", started, err)
+	}
+	response, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputShieldStatusGet, now,
+		struct{}{}), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status InputShieldStatusResult
+	decodeTestPayload(t, response, &status)
+	if len(status.Devices) != 1 || status.Devices[0].InstanceID != device.InstanceID {
+		t.Fatalf("device inventory disappeared during input control: %+v", status)
+	}
+}
+
+func TestAPITemporaryInputControlIsScopedToCreatingWindowsSession(t *testing.T) {
+	api, now := newTestAPI()
+	owner := ClientIdentity{UserSID: "owner", WindowsSessionID: 2}
+	otherSession := ClientIdentity{UserSID: "owner", WindowsSessionID: 3}
+	policy := domain.DefaultMonitoringPolicy().InputShield
+	started, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputControlStart, now,
+		InputControlStartRequest{Policy: policy, DurationMinutes: 15}), owner)
+	if err != nil || started.Type != contracts.MessageTypeInputControlResult {
+		t.Fatalf("owner start response=%+v error=%v", started, err)
+	}
+
+	response, err := api.HandleForClient(
+		newTestMessage(t, contracts.MessageTypeInputControlGet, now, struct{}{}), otherSession,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var otherControl InputControlResult
+	decodeTestPayload(t, response, &otherControl)
+	if otherControl.Enabled || otherControl.State != "disabled" {
+		t.Fatalf("other Windows session received owner control: %+v", otherControl)
+	}
+
+	response, err = api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputControlStart, now,
+		InputControlStartRequest{Policy: policy, DurationMinutes: 15}), otherSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertAPIError(t, response, ErrorCodeInputShieldUnavailable)
+
+	response, err = api.HandleForClient(
+		newTestMessage(t, contracts.MessageTypeInputControlStop, now, struct{}{}), otherSession,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodeTestPayload(t, response, &otherControl)
+	if otherControl.Enabled || otherControl.State != "disabled" {
+		t.Fatalf("other Windows session stopped owner control: %+v", otherControl)
+	}
+	if current := api.currentInputControlFor(owner.Principal()); !current.Enabled {
+		t.Fatalf("owner control was changed by other Windows session: %+v", current)
 	}
 }
 
@@ -501,7 +649,7 @@ func TestAPIManagesAndVerifiesLocalInputShieldCredentials(t *testing.T) {
 		t.Fatalf("update result = %+v", updateResult)
 	}
 	verified, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputShieldCredentialVerify, now,
-		InputShieldCredentialVerifyRequest{Password: []byte("correct-password")}), client)
+		InputShieldCredentialVerifyRequest{ControlID: "shield-session", Password: []byte("correct-password")}), client)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -509,6 +657,58 @@ func TestAPIManagesAndVerifiesLocalInputShieldCredentials(t *testing.T) {
 	decodeTestPayload(t, verified, &verifyResult)
 	if !verifyResult.Verified {
 		t.Fatalf("verify result = %+v", verifyResult)
+	}
+}
+
+func TestAPICannotDeleteCredentialsUsedByTemporaryInputControl(t *testing.T) {
+	now := time.Date(2026, time.September, 22, 12, 0, 0, 0, time.UTC)
+	manager := testInputShieldCredentialManager(&memoryInputShieldCredentialStore{}, &now)
+	if _, err := manager.SetPassword(context.Background(), []byte("correct-password"), false); err != nil {
+		t.Fatal(err)
+	}
+	api := &API{
+		coordinator: NewCoordinator(), now: func() time.Time { return now }, authorizedUserSID: "owner",
+		newChallenge: func() (string, error) { return "local-password-task", nil },
+	}
+	api.SetInputShieldCredentialManager(manager)
+	api.SetAgentExecutable(`C:\Program Files\DesktopGuardPro\desktop-guard-agent.exe`)
+	client := ClientIdentity{UserSID: "owner", WindowsSessionID: 2}
+	policy := domain.DefaultMonitoringPolicy().InputShield
+	policy.CredentialMode = domain.InputShieldCredentialLocal
+	started, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputControlStart, now,
+		InputControlStartRequest{Policy: policy, Indefinite: true}), client)
+	if err != nil || started.Type != contracts.MessageTypeInputControlResult {
+		t.Fatalf("start local input control = %+v, error = %v", started, err)
+	}
+	deleteCredentials := func() contracts.Message {
+		t.Helper()
+		response, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputShieldCredentialDelete,
+			now, struct{}{}), client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	assertAPIError(t, deleteCredentials(), ErrorCodeInvalidTransition)
+	if status, err := manager.Status(context.Background()); err != nil || !status.Configured {
+		t.Fatalf("active control credentials were removed: %+v, error = %v", status, err)
+	}
+	if _, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputControlStop, now,
+		struct{}{}), client); err != nil {
+		t.Fatal(err)
+	}
+	assertAPIError(t, deleteCredentials(), ErrorCodeInvalidTransition)
+	agent := ClientIdentity{UserSID: "owner", WindowsSessionID: 2,
+		ImagePath: `C:\Program Files\DesktopGuardPro\desktop-guard-agent.exe`}
+	acknowledged, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeAgentInputShieldReport, now,
+		AgentInputShieldReportRequest{
+			SessionID: "local-password-task", Action: "stopped", State: "disabled", ObservedUTC: now,
+		}), agent)
+	if err != nil || acknowledged.Type != contracts.MessageTypeAgentInputShieldResult {
+		t.Fatalf("stop acknowledgement = %+v, error = %v", acknowledged, err)
+	}
+	if deleted := deleteCredentials(); deleted.Type != contracts.MessageTypeInputShieldCredentialResult {
+		t.Fatalf("credentials could not be deleted after stop: %+v", deleted)
 	}
 }
 
@@ -537,7 +737,7 @@ func TestAPILocalInputShieldVerificationEndsSessionWhenConfigured(t *testing.T) 
 	client := ClientIdentity{UserSID: "S-1-5-21-1000", WindowsSessionID: 2}
 
 	response, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputShieldCredentialVerify, now,
-		InputShieldCredentialVerifyRequest{Password: []byte("correct-password")}), client)
+		InputShieldCredentialVerifyRequest{ControlID: "shield-session", Password: []byte("correct-password")}), client)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -575,7 +775,7 @@ func TestAPIUsesSessionLimitsForWindowsInputShieldVerification(t *testing.T) {
 	client := ClientIdentity{UserSID: "S-1-5-21-1000", WindowsSessionID: 2}
 	for attempt := 1; attempt <= 2; attempt++ {
 		response, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputShieldCredentialVerify, now,
-			InputShieldCredentialVerifyRequest{UserName: "Raymond", Password: []byte("wrong-password")}), client)
+			InputShieldCredentialVerifyRequest{ControlID: "shield-session", UserName: "Raymond", Password: []byte("wrong-password")}), client)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -730,12 +930,94 @@ func TestAPIManagesStandaloneInputControlWithoutChangingProtectionSession(t *tes
 	}
 	var stopped InputControlResult
 	decodeTestPayload(t, response, &stopped)
-	if stopped.Enabled || stopped.State != "disabled" {
+	if stopped.Enabled || stopped.State != "stopping" || stopped.ControlID != "input-task-1" {
 		t.Fatalf("stopped input control = %+v", stopped)
+	}
+	response, err = api.HandleForClient(newTestMessage(t, contracts.MessageTypeAgentInputShieldReport, now,
+		AgentInputShieldReportRequest{SessionID: "input-task-1", Action: "stopped", State: "disabled", ObservedUTC: now}), agent)
+	if err != nil || response.Type != contracts.MessageTypeAgentInputShieldResult {
+		t.Fatalf("stopped agent report response=%+v error=%v", response, err)
+	}
+	if current := api.currentInputControl(); current.Enabled || current.State != "disabled" {
+		t.Fatalf("input control after agent stop = %+v", current)
 	}
 	session, ok = coordinator.Current()
 	if !ok || session.State != domain.SessionStateActive {
 		t.Fatalf("stopping standalone input control changed protection session: %+v", session)
+	}
+}
+
+func TestAPIStaleStopAcknowledgementCannotClearReplacement(t *testing.T) {
+	now := time.Date(2026, time.September, 22, 14, 0, 0, 0, time.UTC)
+	nextID := 0
+	api := &API{
+		coordinator: NewCoordinator(), now: func() time.Time { return now }, authorizedUserSID: "owner",
+		newChallenge: func() (string, error) {
+			nextID++
+			return fmt.Sprintf("stop-task-%d", nextID), nil
+		},
+	}
+	api.SetAgentExecutable(`C:\Program Files\DesktopGuardPro\desktop-guard-agent.exe`)
+	client := ClientIdentity{UserSID: "owner", WindowsSessionID: 2}
+	agent := ClientIdentity{UserSID: "owner", WindowsSessionID: 2,
+		ImagePath: `C:\Program Files\DesktopGuardPro\desktop-guard-agent.exe`}
+	start := func() InputControlResult {
+		t.Helper()
+		response, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputControlStart, now,
+			InputControlStartRequest{Policy: domain.DefaultMonitoringPolicy().InputShield, Indefinite: true}), client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result InputControlResult
+		decodeTestPayload(t, response, &result)
+		return result
+	}
+	first := start()
+	if _, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputControlStop, now, struct{}{}), client); err != nil {
+		t.Fatal(err)
+	}
+	var once sync.Once
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	api.inputShieldReportBeforeCommit = func() {
+		blocked := false
+		once.Do(func() { blocked = true; close(entered) })
+		if blocked {
+			<-release
+		}
+	}
+	stoppedRequest := newTestMessage(t, contracts.MessageTypeAgentInputShieldReport, now,
+		AgentInputShieldReportRequest{
+			SessionID: first.ControlID, Action: "stopped", State: "disabled", ObservedUTC: now,
+		})
+	firstReport := make(chan apiCallResult, 1)
+	go func() {
+		response, err := api.HandleForClient(stoppedRequest, agent)
+		firstReport <- apiCallResult{response: response, err: err}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("first stop report did not reach commit")
+	}
+	acknowledged, err := api.HandleForClient(stoppedRequest, agent)
+	if err != nil || acknowledged.Type != contracts.MessageTypeAgentInputShieldResult {
+		t.Fatalf("second stop acknowledgement = %+v, error = %v", acknowledged, err)
+	}
+	second := start()
+	close(release)
+	select {
+	case result := <-firstReport:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		current := api.currentInputControlFor(client.Principal())
+		if !current.Enabled || current.ControlID != second.ControlID {
+			t.Fatalf("old stop acknowledgement cleared replacement: %+v", current)
+		}
+		assertAPIError(t, result.response, ErrorCodeInputShieldUnavailable)
+	case <-time.After(3 * time.Second):
+		t.Fatal("first stop report did not complete")
 	}
 }
 
@@ -759,8 +1041,31 @@ func TestAPIStandaloneInputControlExpiresWithoutProtectionSession(t *testing.T) 
 	}
 	var result InputControlResult
 	decodeTestPayload(t, response, &result)
-	if result.Enabled || result.State != "disabled" {
+	if result.Enabled || result.State != "stopping" {
 		t.Fatalf("expired standalone input control = %+v", result)
+	}
+}
+
+func TestAPIReportsTemporaryInputControlAsDegradedWithoutAgentAcknowledgement(t *testing.T) {
+	now := time.Date(2026, time.September, 16, 9, 30, 0, 0, time.UTC)
+	api := &API{coordinator: NewCoordinator(), now: func() time.Time { return now }, authorizedUserSID: "owner",
+		newChallenge: func() (string, error) { return "input-task-no-agent", nil }}
+	client := ClientIdentity{UserSID: "owner"}
+	policy := domain.DefaultMonitoringPolicy().InputShield
+	if _, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputControlStart, now,
+		InputControlStartRequest{Policy: policy, Indefinite: true}), client); err != nil {
+		t.Fatal(err)
+	}
+
+	now = now.Add(16 * time.Second)
+	response, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputControlGet, now, struct{}{}), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result InputControlResult
+	decodeTestPayload(t, response, &result)
+	if !result.Enabled || result.State != "degraded" || result.HookRunning {
+		t.Fatalf("temporary input control without agent acknowledgement = %+v", result)
 	}
 }
 
@@ -790,6 +1095,184 @@ func TestAPIStandaloneInputControlCanRunUntilExplicitUnlock(t *testing.T) {
 	decodeTestPayload(t, response, &current)
 	if !current.Enabled || !current.Indefinite || current.ControlID != "input-task-until-unlock" {
 		t.Fatalf("input control did not remain active until unlock: %+v", current)
+	}
+}
+
+func TestAPITemporaryInputControlStartsOnlyOneConcurrentTask(t *testing.T) {
+	now := time.Date(2026, time.September, 22, 11, 0, 0, 0, time.UTC)
+	challengeEntered := make(chan struct{}, 2)
+	challengeRelease := make(chan struct{})
+	challengeIDs := make(chan string, 2)
+	challengeIDs <- "concurrent-input-1"
+	challengeIDs <- "concurrent-input-2"
+	api := &API{
+		coordinator: NewCoordinator(), now: func() time.Time { return now }, authorizedUserSID: "owner",
+		newChallenge: func() (string, error) {
+			challengeEntered <- struct{}{}
+			<-challengeRelease
+			return <-challengeIDs, nil
+		},
+	}
+	client := ClientIdentity{UserSID: "owner", WindowsSessionID: 2}
+	policy := domain.DefaultMonitoringPolicy().InputShield
+	responses := make(chan apiCallResult, 2)
+	for range 2 {
+		request := newTestMessage(t, contracts.MessageTypeInputControlStart, now,
+			InputControlStartRequest{Policy: policy, Indefinite: true})
+		go func() {
+			response, err := api.HandleForClient(request, client)
+			responses <- apiCallResult{response: response, err: err}
+		}()
+	}
+	for range 2 {
+		select {
+		case <-challengeEntered:
+		case <-time.After(3 * time.Second):
+			t.Fatal("concurrent starts did not reach the challenge factory")
+		}
+	}
+	close(challengeRelease)
+	successes := 0
+	var started InputControlResult
+	for range 2 {
+		select {
+		case result := <-responses:
+			if result.err != nil {
+				t.Fatal(result.err)
+			}
+			if result.response.Type == contracts.MessageTypeInputControlResult {
+				successes++
+				decodeTestPayload(t, result.response, &started)
+			} else {
+				assertAPIError(t, result.response, ErrorCodeInvalidTransition)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("concurrent start did not return")
+		}
+	}
+	current := api.currentInputControlFor(client.Principal())
+	if successes != 1 || !current.Enabled || current.ControlID != started.ControlID {
+		t.Fatalf("concurrent starts succeeded %d times; returned = %+v, current = %+v", successes, started, current)
+	}
+}
+
+func TestAPIRejectsStaleTemporaryInputControlVerification(t *testing.T) {
+	now := time.Date(2026, time.September, 17, 10, 0, 0, 0, time.UTC)
+	api := newAPIWithClock(NewCoordinator(), func() time.Time { return now })
+	api.authorizedUserSID = "owner"
+	api.newChallenge = func() (string, error) { return "current-input-control", nil }
+	credentials := testInputShieldCredentialManager(&memoryInputShieldCredentialStore{}, &now)
+	if _, err := credentials.SetPassword(context.Background(), []byte("correct-password"), false); err != nil {
+		t.Fatal(err)
+	}
+	api.SetInputShieldCredentialManager(credentials)
+	policy := domain.DefaultMonitoringPolicy().InputShield
+	policy.CredentialMode = domain.InputShieldCredentialLocal
+	client := ClientIdentity{UserSID: "owner"}
+	if _, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputControlStart, now,
+		InputControlStartRequest{Policy: policy, Indefinite: true}), client); err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputShieldCredentialVerify, now,
+		InputShieldCredentialVerifyRequest{ControlID: "previous-input-control", Password: []byte("correct-password")}), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertAPIError(t, response, ErrorCodeInputShieldUnavailable)
+
+	current := api.currentInputControl()
+	if !current.Enabled || current.ControlID != "current-input-control" {
+		t.Fatalf("stale verification released current control: %+v", current)
+	}
+}
+
+func TestAPITemporaryInputControlVerificationCannotReleaseReplacement(t *testing.T) {
+	now := time.Date(2026, time.September, 22, 10, 0, 0, 0, time.UTC)
+	verifier := &blockingInputShieldVerifier{started: make(chan struct{}), release: make(chan struct{})}
+	nextID := 0
+	api := &API{
+		coordinator: NewCoordinator(), now: func() time.Time { return now },
+		authorizedUserSID: "owner", verifier: verifier,
+		newChallenge: func() (string, error) {
+			nextID++
+			return fmt.Sprintf("input-task-%d", nextID), nil
+		},
+	}
+	api.SetAgentExecutable(`C:\Program Files\DesktopGuardPro\desktop-guard-agent.exe`)
+	client := ClientIdentity{UserSID: "owner", WindowsSessionID: 2}
+	policy := domain.DefaultMonitoringPolicy().InputShield
+	start := func() InputControlResult {
+		t.Helper()
+		response, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputControlStart, now,
+			InputControlStartRequest{Policy: policy, Indefinite: true}), client)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result InputControlResult
+		decodeTestPayload(t, response, &result)
+		if !result.Enabled {
+			t.Fatalf("input control did not start: %+v", result)
+		}
+		return result
+	}
+	first := start()
+	verifyRequest := newTestMessage(t, contracts.MessageTypeInputShieldCredentialVerify, now,
+		InputShieldCredentialVerifyRequest{
+			ControlID: first.ControlID, UserName: "Raymond", Password: []byte("correct-password"),
+		})
+	verification := make(chan apiCallResult, 1)
+	go func() {
+		response, err := api.HandleForClient(verifyRequest, client)
+		verification <- apiCallResult{response: response, err: err}
+	}()
+	select {
+	case <-verifier.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("credential verification did not start")
+	}
+
+	if _, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputControlStop, now, struct{}{}), client); err != nil {
+		t.Fatal(err)
+	}
+	agent := ClientIdentity{UserSID: "owner", WindowsSessionID: 2,
+		ImagePath: `C:\Program Files\DesktopGuardPro\desktop-guard-agent.exe`}
+	stopped, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeAgentInputShieldReport, now,
+		AgentInputShieldReportRequest{
+			SessionID: first.ControlID, Action: "stopped", State: "disabled", ObservedUTC: now,
+		}), agent)
+	if err != nil || stopped.Type != contracts.MessageTypeAgentInputShieldResult {
+		t.Fatalf("agent stop acknowledgement = %+v, error = %v", stopped, err)
+	}
+	second := start()
+	close(verifier.release)
+	select {
+	case result := <-verification:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		current := api.currentInputControlFor(client.Principal())
+		if !current.Enabled || current.ControlID != second.ControlID {
+			t.Fatalf("old verification released replacement control: %+v", current)
+		}
+		assertAPIError(t, result.response, ErrorCodeInputShieldUnavailable)
+	case <-time.After(3 * time.Second):
+		t.Fatal("credential verification did not complete")
+	}
+	api.verificationMutex.Lock()
+	api.verifier = &testSystemCredentialVerifier{}
+	api.verificationMutex.Unlock()
+	response, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputShieldCredentialVerify, now,
+		InputShieldCredentialVerifyRequest{
+			ControlID: second.ControlID, UserName: "Raymond", Password: []byte("correct-password"),
+		}), client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var verified InputShieldCredentialResult
+	decodeTestPayload(t, response, &verified)
+	if !verified.Verified || api.currentInputControlFor(client.Principal()).Enabled {
+		t.Fatalf("replacement control was not released after its own verification: %+v", verified)
 	}
 }
 
@@ -1111,6 +1594,21 @@ type testSessionLifecycle struct {
 type testSystemCredentialVerifier struct {
 	err   error
 	calls int
+}
+
+type blockingInputShieldVerifier struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (verifier *blockingInputShieldVerifier) VerifySystemCredentials(
+	context.Context,
+	SystemCredentials,
+	string,
+) error {
+	close(verifier.started)
+	<-verifier.release
+	return nil
 }
 
 func (verifier *testSystemCredentialVerifier) VerifySystemCredentials(

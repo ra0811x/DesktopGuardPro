@@ -45,7 +45,7 @@ type inputShieldPromptInfo struct {
 
 var ErrInputShieldPromptCancelled = errors.New("input shield credential prompt was cancelled")
 
-const inputShieldSystemCredentialPromptMessage = "解除本地输入防护需要确认 Windows 所有者凭据。验证期间，其他窗口仍保持输入阻断。"
+const inputShieldSystemCredentialPromptMessage = "解除本地输入防护需要确认 Windows 所有者凭据。解锁组合键触发后，键盘和鼠标会临时放开 20 秒，以便完成验证；超时后其他窗口重新受控。"
 
 func promptInputShieldCredentials(
 	shield *windowsInputShield,

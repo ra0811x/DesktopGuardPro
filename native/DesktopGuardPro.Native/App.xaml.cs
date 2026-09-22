@@ -76,7 +76,10 @@ public partial class App : Application
     private TextBlock? monitoringPolicyStatus;
     private TextBlock? inputShieldRuntimeStatus;
     private TextBlock? inputShieldCredentialStatus;
+    private TextBlock? inputShieldUnlockHint;
+    private TextBlock? temporaryInputUnlockHint;
     private IReadOnlyList<InputShieldDeviceInfo> inputShieldDevices = Array.Empty<InputShieldDeviceInfo>();
+    private bool inputShieldDevicesAvailable;
     private ToggleSwitch? temporaryKeyboardControl;
     private ToggleSwitch? temporaryMouseControl;
     private NumberBox? temporaryInputDuration;
@@ -797,6 +800,7 @@ public partial class App : Application
             monitoringPolicyStatus.Text = $"正在编辑“{MonitoringModeName(editingMonitoringMode)}”模式；保存后用于下一次选择该模式的新会话。";
         }
         UpdateMonitoringPolicySummary();
+        UpdateTemporaryInputUnlockHints();
     }
 
     private MonitoringPolicyInfo MonitoringPolicyFromControls()
@@ -910,6 +914,50 @@ public partial class App : Application
         ApplyMonitoringPolicy(PolicyForMode(editingMonitoringMode));
     }
 
+    private InputShieldPolicyInfo TemporaryInputPolicy() =>
+        currentMonitoringProfiles?.Custom.Resolved().InputShield ??
+        currentMonitoringPolicy.InputShield ?? InputShieldPolicyInfo.CreateDefault();
+
+    private static string InputShieldUnlockKeyName(int keyCode) => keyCode switch
+    {
+        0x20 => "Space",
+        0x09 => "Tab",
+        0x0D => "Enter",
+        0x1B => "Esc",
+        0x25 => "左方向键",
+        0x26 => "上方向键",
+        0x27 => "右方向键",
+        0x28 => "下方向键",
+        0x2E => "Delete",
+        >= 0x30 and <= 0x39 => ((char)keyCode).ToString(),
+        >= 0x41 and <= 0x5A => ((char)keyCode).ToString(),
+        >= 0x70 and <= 0x87 => $"F{keyCode - 0x6F}",
+        _ => $"虚拟键码 {keyCode}",
+    };
+
+    private static string InputShieldUnlockInstruction(InputShieldPolicyInfo policy)
+    {
+        var key = InputShieldUnlockKeyName(policy.UnlockKeyCode);
+        if (policy.UnlockTrigger == "tap")
+        {
+            return $"在 {policy.UnlockTapWindowMilliseconds} 毫秒内连续按 {key} {policy.UnlockTapCount} 次";
+        }
+        var keys = new List<string>();
+        if (policy.UnlockRequireControl) keys.Add("Ctrl");
+        if (policy.UnlockRequireAlt) keys.Add("Alt");
+        if (policy.UnlockRequireShift) keys.Add("Shift");
+        keys.Add(key);
+        return $"按 {string.Join("+", keys)}";
+    }
+
+    private void UpdateTemporaryInputUnlockHints()
+    {
+        var instruction = InputShieldUnlockInstruction(TemporaryInputPolicy());
+        var hint = $"可{instruction} 呼出身份验证窗口；触发后键盘和鼠标临时放开 20 秒以完成验证。";
+        if (inputShieldUnlockHint is not null) inputShieldUnlockHint.Text = hint;
+        if (temporaryInputUnlockHint is not null) temporaryInputUnlockHint.Text = hint;
+    }
+
     private void SelectMonitoringProfile(string mode)
     {
         editingMonitoringMode = mode;
@@ -941,14 +989,14 @@ public partial class App : Application
         }
     }
 
-    private async Task SaveMonitoringPolicyAsync()
+    private async Task<bool> SaveMonitoringPolicyAsync()
     {
         if (fileActivityPolicyEnabled is null || processAndSoftwarePolicyEnabled is null ||
             systemAndNetworkPolicyEnabled is null || externalDevicesPolicyEnabled is null ||
             userSessionActivityPolicyEnabled is null || strictReadAuditPolicyEnabled is null ||
             monitoringPolicyStatus is null)
         {
-            return;
+            return false;
         }
         var policy = MonitoringPolicyFromControls();
         currentMonitoringPolicy = policy;
@@ -966,10 +1014,12 @@ public partial class App : Application
                 ApplyMonitoringPolicy(result.MonitoringPolicy ?? policy);
             }
             await LoadSessionStartPreviewAsync();
+            return true;
         }
         catch
         {
             monitoringPolicyStatus.Text = "无法保存策略。请检查采集类别、严格读取审计依赖和采样间隔。";
+            return false;
         }
     }
 
@@ -1207,9 +1257,15 @@ public partial class App : Application
 
     private async Task ShowInputShieldPolicyDetailsAsync()
     {
+        var previousMode = editingMonitoringMode;
         if (currentMonitoringProfiles is not null)
         {
             editingMonitoringMode = "custom";
+            if (settingsMonitoringMode is not null)
+            {
+                settingsMonitoringMode.SelectedItem = settingsMonitoringMode.Items.OfType<ComboBoxItem>()
+                    .FirstOrDefault(item => string.Equals(item.Tag as string, "custom", StringComparison.Ordinal));
+            }
             ApplyMonitoringPolicy(currentMonitoringProfiles.Custom.Resolved());
         }
         var policy = currentMonitoringPolicy.Resolved();
@@ -1232,15 +1288,21 @@ public partial class App : Application
         var keyboard = CreateMonitoringPolicyOption("阻断物理键盘输入", details.BlockPhysicalKeyboard);
         var mouse = CreateMonitoringPolicyOption("阻断物理鼠标点击与滚轮", details.BlockPhysicalMouse);
         var pointer = CreateMonitoringPolicyOption("同时阻断鼠标指针移动", details.BlockPointerMovement);
-        pointer.IsEnabled = mouse.IsOn;
-        mouse.Toggled += (_, _) =>
+        void UpdateInputBlockingControls()
         {
             pointer.IsEnabled = mouse.IsOn;
             if (!mouse.IsOn)
             {
                 pointer.IsOn = false;
             }
-        };
+            if (!keyboard.IsOn && !mouse.IsOn)
+            {
+                keyboard.IsOn = true;
+            }
+        }
+        keyboard.Toggled += (_, _) => UpdateInputBlockingControls();
+        mouse.Toggled += (_, _) => UpdateInputBlockingControls();
+        UpdateInputBlockingControls();
         var injectedMode = Choice("注入输入处理级别", details.InjectedInputMode,
             ("兼容模式：允许全部注入输入", "compatible"),
             ("受限模式：拒绝低完整性注入", "restricted"),
@@ -1264,9 +1326,21 @@ public partial class App : Application
         var trackDevices = CreateMonitoringPolicyOption("识别当前活跃键盘与鼠标", details.TrackActiveDevices);
         var deviceArrival = CreateMonitoringPolicyOption("新键鼠设备接入时告警并记录", details.WarnOnDeviceArrival);
         var deviceRemoval = CreateMonitoringPolicyOption("记录键鼠设备移除", details.RecordDeviceRemoval);
+        void UpdateDeviceControls()
+        {
+            deviceArrival.IsEnabled = trackDevices.IsOn;
+            deviceRemoval.IsEnabled = trackDevices.IsOn;
+            if (!trackDevices.IsOn)
+            {
+                deviceArrival.IsOn = false;
+                deviceRemoval.IsOn = false;
+            }
+        }
+        trackDevices.Toggled += (_, _) => UpdateDeviceControls();
+        UpdateDeviceControls();
         var trigger = Choice("本地解锁触发方式", details.UnlockTrigger,
             ("组合键", "combination"), ("单键连续点击", "tap"));
-        var keyCode = CreateMonitoringPolicyInterval("解锁键 Windows 虚拟键码（1–255）", details.UnlockKeyCode, 1, 255);
+        var keyCode = CreateMonitoringPolicyInterval("解锁键 Windows 虚拟键码（U=85，空格=32）", details.UnlockKeyCode, 1, 255);
         var requireControl = CreateMonitoringPolicyOption("组合键包含 Ctrl", details.UnlockRequireControl);
         var requireAlt = CreateMonitoringPolicyOption("组合键包含 Alt", details.UnlockRequireAlt);
         var requireShift = CreateMonitoringPolicyOption("组合键包含 Shift", details.UnlockRequireShift);
@@ -1303,6 +1377,23 @@ public partial class App : Application
         var recordCategory = CreateMonitoringPolicyOption("记录被阻断输入的类别和次数", details.RecordBlockedInputCategory);
         var recordKeys = CreateMonitoringPolicyOption("记录具体按键名称", details.RecordKeyNames);
         var recordCoordinates = CreateMonitoringPolicyOption("记录鼠标点击坐标", details.RecordPointerCoordinates);
+        void UpdateAuditControls()
+        {
+            recordKeys.IsEnabled = recordCategory.IsOn && keyboard.IsOn;
+            recordCoordinates.IsEnabled = recordCategory.IsOn && mouse.IsOn;
+            if (!recordKeys.IsEnabled)
+            {
+                recordKeys.IsOn = false;
+            }
+            if (!recordCoordinates.IsEnabled)
+            {
+                recordCoordinates.IsOn = false;
+            }
+        }
+        recordCategory.Toggled += (_, _) => UpdateAuditControls();
+        keyboard.Toggled += (_, _) => UpdateAuditControls();
+        mouse.Toggled += (_, _) => UpdateAuditControls();
+        UpdateAuditControls();
         var heartbeat = CreateMonitoringPolicyInterval("钩子健康心跳（秒，1–30）", details.HookHeartbeatSeconds, 1, 30);
         var privacyNotice = new TextBlock
         {
@@ -1312,7 +1403,7 @@ public partial class App : Application
         };
         if (!await ShowMonitoringPolicyDialogAsync(
                 "临时输入控制设置",
-                "此处配置仪表盘上的独立键鼠控制。默认按 Ctrl+Alt+Space 呼出验证窗口；验证成功后释放临时控制。Ctrl+Alt+Delete 与 Windows 安全桌面继续由操作系统控制。服务或系统重启会安全释放，不会自动重新锁定。",
+                "此处配置仪表盘上的独立键鼠控制。选项会按依赖关系自动启用或关闭，避免保存无效组合。默认按 Ctrl+Alt+Space 呼出验证窗口；验证成功后释放临时控制。Ctrl+Alt+Delete 与 Windows 安全桌面继续由操作系统控制。服务或系统重启会安全释放，不会自动重新锁定。",
                 keyboard, mouse, pointer, injectedMode,
                 overlay, warningDuration, warningMessage,
                 trackDevices, deviceArrival, deviceRemoval,
@@ -1320,14 +1411,16 @@ public partial class App : Application
                 credential, recovery, attempts, lockout,
                 recordCategory, recordKeys, recordCoordinates, heartbeat, privacyNotice))
         {
+            if (settingsMonitoringMode is not null)
+            {
+                settingsMonitoringMode.SelectedItem = settingsMonitoringMode.Items.OfType<ComboBoxItem>()
+                    .FirstOrDefault(item => string.Equals(item.Tag as string, previousMode, StringComparison.Ordinal));
+            }
+            SelectMonitoringProfile(previousMode);
             return;
         }
         var blockKeyboard = keyboard.IsOn;
         var blockMouse = mouse.IsOn;
-        if (!blockKeyboard && !blockMouse)
-        {
-            blockKeyboard = true;
-        }
         var triggerMode = SelectedTag(trigger, "combination");
         var control = requireControl.IsOn;
         var alt = requireAlt.IsOn;
@@ -1358,7 +1451,13 @@ public partial class App : Application
                 false, Math.Clamp((int)Math.Round(heartbeat.Value), 1, 30)),
         };
         ApplyMonitoringPolicy(currentMonitoringPolicy);
-        await SaveMonitoringPolicyAsync();
+        if (!await SaveMonitoringPolicyAsync())
+        {
+            ApplyMonitoringPolicy(policy);
+            monitoringPolicyStatus!.Text = "控制规则未保存；临时输入控制仍使用上次保存的规则。";
+            await ShowInputShieldCredentialNoticeAsync(
+                "控制规则未保存", "临时输入控制仍使用上次保存的规则。请检查后台服务后重试。");
+        }
     }
 
     private async Task LoadInputShieldManagementAsync()
@@ -1369,15 +1468,14 @@ public partial class App : Application
         }
         inputShieldRuntimeStatus.Text = "正在读取输入防护运行状态...";
         inputShieldCredentialStatus.Text = "正在读取本地凭据状态...";
+        var client = new ControlPipeClient();
+        var runtimeTask = client.GetInputShieldStatusAsync(CancellationToken.None);
+        var credentialTask = client.GetInputShieldCredentialStatusAsync(CancellationToken.None);
         try
         {
-            var client = new ControlPipeClient();
-            var runtimeTask = client.GetInputShieldStatusAsync(CancellationToken.None);
-            var credentialTask = client.GetInputShieldCredentialStatusAsync(CancellationToken.None);
-            await Task.WhenAll(runtimeTask, credentialTask);
             var runtime = await runtimeTask;
-            var credential = await credentialTask;
             inputShieldDevices = runtime.Devices ?? Array.Empty<InputShieldDeviceInfo>();
+            inputShieldDevicesAvailable = true;
             var state = runtime.State switch
             {
                 "starting" => "正在启动",
@@ -1391,14 +1489,22 @@ public partial class App : Application
                 ? "暂无运行记录"
                 : $"最近心跳 {runtime.ObservedUtc.Value.ToLocalTime():yyyy-MM-dd HH:mm:ss}";
             inputShieldRuntimeStatus.Text = $"状态：{state}；钩子{(runtime.HookRunning ? "已运行" : "未运行")}；{heartbeat}；输入设备 {inputShieldDevices.Count} 个；丢弃事件 {runtime.DroppedEvents}";
+        }
+        catch
+        {
+            inputShieldDevices = Array.Empty<InputShieldDeviceInfo>();
+            inputShieldDevicesAvailable = false;
+            inputShieldRuntimeStatus.Text = "无法读取输入防护运行状态。";
+        }
+        try
+        {
+            var credential = await credentialTask;
             inputShieldCredentialStatus.Text = credential.Configured
                 ? $"独立本地密码已设置；一次性恢复码{(credential.RecoveryCodeEnabled ? "可用" : "未启用或已使用")}。"
                 : "尚未设置独立本地防护密码。使用 Windows 所有者凭据时无需设置。";
         }
         catch
         {
-            inputShieldDevices = Array.Empty<InputShieldDeviceInfo>();
-            inputShieldRuntimeStatus.Text = "无法读取输入防护运行状态。";
             inputShieldCredentialStatus.Text = "无法读取本地凭据状态。";
         }
     }
@@ -1419,11 +1525,7 @@ public partial class App : Application
             temporaryInputControlStatus.Text = "无法读取临时输入控制状态。";
             if (startTemporaryInputControlButton is not null)
             {
-                startTemporaryInputControlButton.IsEnabled = true;
-            }
-            if (stopTemporaryInputControlButton is not null)
-            {
-                stopTemporaryInputControlButton.IsEnabled = false;
+                startTemporaryInputControlButton.IsEnabled = false;
             }
         }
     }
@@ -1434,8 +1536,12 @@ public partial class App : Application
         {
             return;
         }
-        var temporary = result.Enabled && string.Equals(result.Source, "temporary", StringComparison.Ordinal);
-        if (!result.Enabled)
+        var temporary = string.Equals(result.Source, "temporary", StringComparison.Ordinal);
+        if (temporary && string.Equals(result.State, "stopping", StringComparison.Ordinal))
+        {
+            temporaryInputControlStatus.Text = "正在等待交互式代理确认键鼠钩子已停止...";
+        }
+        else if (!result.Enabled)
         {
             temporaryInputControlStatus.Text = "当前未启用临时输入控制。它可独立运行，不会启动任何审计模块。";
         }
@@ -1449,7 +1555,7 @@ public partial class App : Application
             };
             var runtime = result.State == "protecting" && result.HookRunning ? "运行中" : result.State;
             var duration = result.Indefinite
-                ? "持续到 Ctrl+Alt+Space 验证解锁或手动停止"
+                ? $"可{InputShieldUnlockInstruction(result.Policy ?? TemporaryInputPolicy())} 呼出验证窗口；验证成功或手动停止后释放"
                 : $"到期时间 {result.ExpiresUtc?.ToLocalTime():yyyy-MM-dd HH:mm}";
             temporaryInputControlStatus.Text = $"临时控制{runtime}：{scope}；{duration}。";
         }
@@ -1459,12 +1565,17 @@ public partial class App : Application
         }
         if (startTemporaryInputControlButton is not null)
         {
-            startTemporaryInputControlButton.IsEnabled = true;
-            startTemporaryInputControlButton.Content = temporary ? "更新临时控制" : "启动临时控制";
+            var stopping = temporary && string.Equals(result.State, "stopping", StringComparison.Ordinal);
+            startTemporaryInputControlButton.IsEnabled = !stopping && !temporary;
+            startTemporaryInputControlButton.Content = stopping ? "正在停止" : temporary ? "请先停止当前控制" : "启动临时控制";
         }
         if (stopTemporaryInputControlButton is not null)
         {
-            stopTemporaryInputControlButton.IsEnabled = temporary;
+            stopTemporaryInputControlButton.IsEnabled = temporary && result.Enabled;
+        }
+        if (temporary && result.State is ("starting" or "degraded" or "stopping"))
+        {
+            EnsureInteractiveAgentStarted();
         }
     }
 
@@ -1484,15 +1595,32 @@ public partial class App : Application
         var duration = indefinite
             ? 0
             : double.IsNaN(temporaryInputDuration.Value) ? 15 : (int)Math.Round(temporaryInputDuration.Value);
-        var policy = (currentMonitoringProfiles?.Custom.Resolved().InputShield ??
-            currentMonitoringPolicy.InputShield ?? InputShieldPolicyInfo.CreateDefault()) with
+        var configuredPolicy = TemporaryInputPolicy();
+        var policy = configuredPolicy with
         {
             BlockPhysicalKeyboard = temporaryKeyboardControl.IsOn,
             BlockPhysicalMouse = temporaryMouseControl.IsOn,
-            BlockPointerMovement = temporaryMouseControl.IsOn,
+            BlockPointerMovement = temporaryMouseControl.IsOn && configuredPolicy.BlockPointerMovement,
             RestoreAfterRestart = false,
             UnlockAction = "suspend",
         };
+        if (string.Equals(policy.CredentialMode, "local", StringComparison.Ordinal))
+        {
+            try
+            {
+                var credential = await new ControlPipeClient().GetInputShieldCredentialStatusAsync(CancellationToken.None);
+                if (!credential.Configured)
+                {
+                    temporaryInputControlStatus.Text = "当前规则使用独立本地密码。请先在“高级设置与设备”中设置本地密码。";
+                    return;
+                }
+            }
+            catch
+            {
+                temporaryInputControlStatus.Text = "无法确认本地密码状态。请确认服务正在运行后重试。";
+                return;
+            }
+        }
         temporaryInputControlStatus.Text = "正在启动临时输入控制...";
         if (startTemporaryInputControlButton is not null)
         {
@@ -1540,11 +1668,13 @@ public partial class App : Application
         }
         await LoadInputShieldManagementAsync();
         var deviceList = new StackPanel { Spacing = 10 };
-        if (inputShieldDevices.Count == 0)
+        if (!inputShieldDevicesAvailable || inputShieldDevices.Count == 0)
         {
             deviceList.Children.Add(new TextBlock
             {
-                Text = "当前没有代理上报的键盘或鼠标设备。保护未运行、设备跟踪关闭或心跳尚未到达时会出现此状态。",
+                Text = inputShieldDevicesAvailable
+                    ? "当前没有代理上报的键盘或鼠标设备。请确认交互式代理正在运行，并等待设备清单上报。"
+                    : "无法读取输入设备清单。请检查后台服务与交互式代理后重试。",
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = ThemeBrush("DgpSecondaryTextBrush"),
             });
@@ -1642,6 +1772,7 @@ public partial class App : Application
         if (passwordText.EnumerateRunes().Count() is < 8 or > 128 || !string.Equals(passwordText, confirmationText, StringComparison.Ordinal))
         {
             inputShieldCredentialStatus.Text = "密码长度需要为 8–128 个字符，并且两次输入保持一致。";
+            await ShowInputShieldCredentialNoticeAsync("未保存本地密码", inputShieldCredentialStatus.Text);
             return;
         }
         var passwordBytes = Encoding.UTF8.GetBytes(passwordText);
@@ -1659,16 +1790,62 @@ public partial class App : Application
             {
                 await ShowInputShieldRecoveryCodeAsync(result.RecoveryCode);
             }
+            else if (result.Configured)
+            {
+                await ShowInputShieldCredentialNoticeAsync(
+                    "本地密码已保存",
+                    "独立本地防护密码已成功保存。使用它解锁时，请在控制规则设置中选择“独立本地防护密码”。");
+            }
+            else
+            {
+                await ShowInputShieldCredentialNoticeAsync("未保存本地密码", "服务没有确认保存本地防护凭据。");
+            }
             await LoadInputShieldManagementAsync();
         }
-        catch
+        catch (Exception exception)
         {
-            inputShieldCredentialStatus.Text = "无法保存本地输入防护凭据。";
+            var message = InputShieldCredentialFailureMessage(exception);
+            inputShieldCredentialStatus.Text = message;
+            await ShowInputShieldCredentialNoticeAsync("未保存本地密码", message);
         }
         finally
         {
             CryptographicOperations.ZeroMemory(passwordBytes);
         }
+    }
+
+    private static string InputShieldCredentialFailureMessage(Exception exception)
+    {
+        if (exception is OperationCanceledException)
+        {
+            return "保存本地防护密码超时。请确认服务正在运行后重试。";
+        }
+        if (exception.Message.Contains("must contain 8 to 128", StringComparison.OrdinalIgnoreCase))
+        {
+            return "密码长度需要为 8–128 个字符。";
+        }
+        if (exception.Message.Contains("credentials could not be saved", StringComparison.OrdinalIgnoreCase))
+        {
+            return "服务无法保存本地防护密码。请确认服务状态正常且数据目录可写。";
+        }
+        return "无法保存本地防护密码。请确认服务正在运行后重试。";
+    }
+
+    private async Task ShowInputShieldCredentialNoticeAsync(string title, string message)
+    {
+        if (mainWindow?.Content is not FrameworkElement root || root.XamlRoot is null)
+        {
+            return;
+        }
+        var dialog = new ContentDialog
+        {
+            XamlRoot = root.XamlRoot,
+            RequestedTheme = ElementTheme.Light,
+            Title = title,
+            Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
+            CloseButtonText = "关闭",
+        };
+        await dialog.ShowAsync();
     }
 
     private async Task ShowInputShieldRecoveryCodeAsync(string recoveryCode)
@@ -1722,7 +1899,7 @@ public partial class App : Application
             XamlRoot = root.XamlRoot,
             RequestedTheme = ElementTheme.Light,
             Title = "删除本地防护凭据",
-            Content = "删除后，使用独立本地密码的策略将无法完成解锁。请先将身份验证方式切换为 Windows 所有者凭据。",
+            Content = "正在运行或等待停止确认的本地密码任务需要先结束。删除后，使用本地密码的规则需要重新设置凭据才能启动。",
             PrimaryButtonText = "删除",
             CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Close,
@@ -1735,10 +1912,15 @@ public partial class App : Application
         {
             await new ControlPipeClient().DeleteInputShieldCredentialsAsync(CancellationToken.None);
             await LoadInputShieldManagementAsync();
+            await ShowInputShieldCredentialNoticeAsync("本地密码已删除", "本地防护密码及一次性恢复码已删除。");
         }
-        catch
+        catch (Exception exception)
         {
-            inputShieldCredentialStatus.Text = "无法删除本地输入防护凭据。";
+            var message = exception.Message.Contains("stop local-credential input control", StringComparison.OrdinalIgnoreCase)
+                ? "当前临时输入控制仍依赖本地密码。请先停止任务并等待停止确认。"
+                : "无法删除本地输入防护凭据。请检查后台服务后重试。";
+            inputShieldCredentialStatus.Text = message;
+            await ShowInputShieldCredentialNoticeAsync("本地密码未删除", message);
         }
     }
 
@@ -3136,7 +3318,7 @@ public partial class App : Application
         };
         temporaryMouseControl = new ToggleSwitch
         {
-            Header = "禁用本地鼠标输入与移动",
+            Header = "禁用本地鼠标点击与滚轮",
             OnContent = "禁用",
             OffContent = "允许",
             IsOn = false,
@@ -3200,6 +3382,19 @@ public partial class App : Application
         configureInputShieldCredentialsButton.Click += async (_, _) => await ConfigureInputShieldCredentialsAsync();
         var deleteInputShieldCredentialsButton = new Button { Content = "删除本地密码" };
         deleteInputShieldCredentialsButton.Click += async (_, _) => await DeleteInputShieldCredentialsAsync();
+        foreach (var actionButton in new[]
+                 {
+                     configureTemporaryInputButton,
+                     refreshInputShieldButton,
+                     showInputShieldDevicesButton,
+                     configureInputShieldCredentialsButton,
+                     deleteInputShieldCredentialsButton,
+                 })
+        {
+            actionButton.HorizontalAlignment = HorizontalAlignment.Stretch;
+            actionButton.MinHeight = 42;
+            actionButton.Padding = new Thickness(16, 9, 16, 9);
+        }
         var openModeSettingsButton = new Button
         {
             Content = "查看模式配置",
@@ -3218,42 +3413,92 @@ public partial class App : Application
         Grid.SetColumn(temporaryInputDuration, 1);
         temporaryInputTiming.Children.Add(temporaryInputDurationMode);
         temporaryInputTiming.Children.Add(temporaryInputDuration);
+        var inputManagementActions = new Grid
+        {
+            ColumnSpacing = 10,
+            RowSpacing = 10,
+            ColumnDefinitions =
+            {
+                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
+                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
+            },
+            RowDefinitions =
+            {
+                new RowDefinition { Height = GridLength.Auto },
+                new RowDefinition { Height = GridLength.Auto },
+            },
+        };
+        Grid.SetColumnSpan(configureTemporaryInputButton, 2);
+        Grid.SetRow(showInputShieldDevicesButton, 1);
+        Grid.SetRow(refreshInputShieldButton, 1);
+        Grid.SetColumn(refreshInputShieldButton, 1);
+        inputManagementActions.Children.Add(configureTemporaryInputButton);
+        inputManagementActions.Children.Add(showInputShieldDevicesButton);
+        inputManagementActions.Children.Add(refreshInputShieldButton);
+
+        var inputCredentialActions = new Grid
+        {
+            ColumnSpacing = 10,
+            ColumnDefinitions =
+            {
+                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
+                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
+            },
+        };
+        Grid.SetColumn(deleteInputShieldCredentialsButton, 1);
+        inputCredentialActions.Children.Add(configureInputShieldCredentialsButton);
+        inputCredentialActions.Children.Add(deleteInputShieldCredentialsButton);
+
+        inputShieldUnlockHint = new TextBlock
+        {
+            Foreground = ThemeBrush("DgpSecondaryTextBrush"),
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var inputManagementContent = new StackPanel
+        {
+            Width = 400,
+            Spacing = 12,
+            Children =
+            {
+                new TextBlock
+                {
+                    Text = "高级设置与设备",
+                    FontSize = 20,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    Foreground = ThemeBrush("DgpPrimaryTextBrush"),
+                },
+                inputShieldUnlockHint,
+                inputShieldRuntimeStatus,
+                inputShieldCredentialStatus,
+                new TextBlock
+                {
+                    Text = "控制与设备",
+                    Margin = new Thickness(0, 4, 0, 0),
+                    FontSize = 14,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    Foreground = ThemeBrush("DgpPrimaryTextBrush"),
+                },
+                inputManagementActions,
+                new TextBlock
+                {
+                    Text = "本地凭据",
+                    Margin = new Thickness(0, 4, 0, 0),
+                    FontSize = 14,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    Foreground = ThemeBrush("DgpPrimaryTextBrush"),
+                },
+                inputCredentialActions,
+            },
+        };
         var inputManagementFlyout = new Flyout
         {
-            Content = new StackPanel
+            Content = new ScrollViewer
             {
-                Width = 440,
-                Spacing = 10,
-                Children =
-                {
-                    new TextBlock
-                    {
-                        Text = "高级设置与设备",
-                        FontSize = 18,
-                        FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                        Foreground = ThemeBrush("DgpPrimaryTextBrush"),
-                    },
-                    new TextBlock
-                    {
-                        Text = "Ctrl+Alt+Space 可呼出身份验证窗口。",
-                        Foreground = ThemeBrush("DgpSecondaryTextBrush"),
-                        TextWrapping = TextWrapping.Wrap,
-                    },
-                    inputShieldRuntimeStatus,
-                    inputShieldCredentialStatus,
-                    new StackPanel
-                    {
-                        Orientation = Orientation.Horizontal,
-                        Spacing = 8,
-                        Children = { configureTemporaryInputButton, refreshInputShieldButton, showInputShieldDevicesButton },
-                    },
-                    new StackPanel
-                    {
-                        Orientation = Orientation.Horizontal,
-                        Spacing = 8,
-                        Children = { configureInputShieldCredentialsButton, deleteInputShieldCredentialsButton },
-                    },
-                },
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                HorizontalScrollMode = ScrollMode.Disabled,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollMode = ScrollMode.Auto,
+                Content = inputManagementContent,
             },
         };
         var inputManagementButton = new Button
@@ -3262,6 +3507,12 @@ public partial class App : Application
             HorizontalAlignment = HorizontalAlignment.Left,
             Flyout = inputManagementFlyout,
         };
+        temporaryInputUnlockHint = new TextBlock
+        {
+            Foreground = ThemeBrush("DgpSecondaryTextBrush"),
+            TextWrapping = TextWrapping.Wrap,
+        };
+        UpdateTemporaryInputUnlockHints();
         var overview = new StackPanel
         {
             Spacing = 12,
@@ -3321,6 +3572,12 @@ public partial class App : Application
                             TextWrapping = TextWrapping.Wrap,
                         },
                         CreateBalancedDashboardColumns(temporaryKeyboardControl, temporaryMouseControl, 400),
+                        new TextBlock
+                        {
+                            Text = "鼠标指针是否可移动由“控制规则设置”中的选项决定。",
+                            Foreground = ThemeBrush("DgpSecondaryTextBrush"),
+                            TextWrapping = TextWrapping.Wrap,
+                        },
                         temporaryInputTiming,
                         new Border
                         {
@@ -3331,12 +3588,7 @@ public partial class App : Application
                             Padding = new Thickness(12),
                             Child = temporaryInputControlStatus,
                         },
-                        new TextBlock
-                        {
-                            Text = "Ctrl+Alt+Space 可呼出身份验证窗口。",
-                            Foreground = ThemeBrush("DgpSecondaryTextBrush"),
-                            TextWrapping = TextWrapping.Wrap,
-                        },
+                        temporaryInputUnlockHint,
                         new StackPanel
                         {
                             Orientation = Orientation.Horizontal,

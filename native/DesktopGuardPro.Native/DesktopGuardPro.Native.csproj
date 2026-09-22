@@ -13,6 +13,7 @@
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <WinUISDKReferences>false</WinUISDKReferences>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>

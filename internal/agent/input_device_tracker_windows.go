@@ -28,6 +28,7 @@ const (
 	inputDeviceChangeArrival       = 1
 	inputDeviceChangeRemoval       = 2
 	inputDeviceMessageOnlyWindow   = ^uintptr(2)
+	inputDeviceStopTimeout         = 5 * time.Second
 )
 
 var (
@@ -114,8 +115,14 @@ func (tracker *inputDeviceTracker) Stop() {
 		return
 	}
 	inputShieldPostThreadMessage.Call(uintptr(threadID), windowsMessageQuit, 0, 0)
-	<-tracker.stopped
-	activeInputDeviceTracker.CompareAndSwap(tracker, nil)
+	select {
+	case <-tracker.stopped:
+		activeInputDeviceTracker.CompareAndSwap(tracker, nil)
+	case <-time.After(inputDeviceStopTimeout):
+		// The tracker no longer blocks the input hook, so do not keep the agent
+		// alive forever if its message loop fails to exit. Its goroutine clears the
+		// global registration when it eventually terminates.
+	}
 }
 
 func (tracker *inputDeviceTracker) Events() <-chan InputDeviceChange { return tracker.events }
@@ -143,6 +150,7 @@ func (tracker *inputDeviceTracker) run(started chan<- error) {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	defer close(tracker.stopped)
+	defer activeInputDeviceTracker.CompareAndSwap(tracker, nil)
 	tracker.threadID.Store(windows.GetCurrentThreadId())
 
 	module, _, _ := inputShieldGetModuleHandle.Call(0)

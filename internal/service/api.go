@@ -162,10 +162,11 @@ type InputShieldCredentialUpdateRequest struct {
 }
 
 type InputShieldCredentialVerifyRequest struct {
-	UserName string `json:"userName,omitempty"`
-	Domain   string `json:"domain,omitempty"`
-	Password []byte `json:"password"`
-	Recovery bool   `json:"recovery"`
+	ControlID string `json:"controlId"`
+	UserName  string `json:"userName,omitempty"`
+	Domain    string `json:"domain,omitempty"`
+	Password  []byte `json:"password"`
+	Recovery  bool   `json:"recovery"`
 }
 
 type InputShieldCredentialResult struct {
@@ -274,30 +275,34 @@ func (identity ClientIdentity) Principal() string {
 }
 
 type API struct {
-	coordinator                  *Coordinator
-	store                        SessionStore
-	analysis                     *analysisRuntime
-	now                          func() time.Time
-	authorizedUserSID            string
-	healthMutex                  sync.RWMutex
-	healthStatus                 string
-	healthStatusSource           func() string
-	lifecycleMutex               sync.RWMutex
-	sessionLifecycle             SessionLifecycle
-	verificationMutex            sync.Mutex
-	challenges                   map[string]endVerificationChallenge
-	failures                     map[string]endVerificationFailure
-	verifier                     SystemCredentialVerifier
-	newChallenge                 func() (string, error)
-	directoryMonitoringValidator func([]string) ([]string, error)
-	monitoringTargetValidator    func([]domain.MonitoringTarget) ([]domain.MonitoringTarget, error)
-	agentMutex                   sync.RWMutex
-	agentExecutable              string
-	agentActivityHandler         AgentActivityHandler
-	agentInputShieldHandler      AgentInputShieldHandler
-	inputShieldStatus            InputShieldStatusResult
-	inputControl                 InputControlResult
-	inputShieldCredentials       *InputShieldCredentialManager
+	coordinator                   *Coordinator
+	store                         SessionStore
+	analysis                      *analysisRuntime
+	now                           func() time.Time
+	authorizedUserSID             string
+	healthMutex                   sync.RWMutex
+	healthStatus                  string
+	healthStatusSource            func() string
+	lifecycleMutex                sync.RWMutex
+	sessionLifecycle              SessionLifecycle
+	verificationMutex             sync.Mutex
+	challenges                    map[string]endVerificationChallenge
+	failures                      map[string]endVerificationFailure
+	verifier                      SystemCredentialVerifier
+	newChallenge                  func() (string, error)
+	directoryMonitoringValidator  func([]string) ([]string, error)
+	monitoringTargetValidator     func([]domain.MonitoringTarget) ([]domain.MonitoringTarget, error)
+	agentMutex                    sync.RWMutex
+	agentExecutable               string
+	agentActivityHandler          AgentActivityHandler
+	agentInputShieldHandler       AgentInputShieldHandler
+	inputShieldReportBeforeCommit func()
+	inputShieldStatus             InputShieldStatusResult
+	inputShieldStatusOwner        string
+	inputDeviceInventories        map[string]InputShieldStatusResult
+	inputControl                  InputControlResult
+	inputControlOwner             string
+	inputShieldCredentials        *InputShieldCredentialManager
 }
 
 type endVerificationChallenge struct {
@@ -505,13 +510,13 @@ func (api *API) HandleForClientContext(parent context.Context, request contracts
 	case contracts.MessageTypeAgentInputShieldReport:
 		return api.recordAgentInputShield(ctx, request, client)
 	case contracts.MessageTypeInputShieldStatusGet:
-		return api.getInputShieldStatus(request)
+		return api.getInputShieldStatus(request, client)
 	case contracts.MessageTypeInputControlGet:
-		return api.getInputControl(request)
+		return api.getInputControl(request, client)
 	case contracts.MessageTypeInputControlStart:
-		return api.startInputControl(ctx, request)
+		return api.startInputControl(ctx, request, client)
 	case contracts.MessageTypeInputControlStop:
-		return api.stopInputControl(request)
+		return api.stopInputControl(request, client)
 	case contracts.MessageTypeReportExport:
 		return api.exportReport(ctx, request, client)
 	case contracts.MessageTypeReportChunkGet:
@@ -616,9 +621,34 @@ func (api *API) recordAgentInputShield(
 	if !sameWindowsPath(agentExecutable, client.ImagePath) {
 		return api.errorResponse(request, ErrorCodeUnauthorized, "agent input shield client is not authorized")
 	}
-	control := api.currentInputControl()
-	if !control.Enabled || control.ControlID != payload.SessionID {
+	scope := client.Principal()
+	if scope == "" {
+		return api.errorResponse(request, ErrorCodeUnauthorized, "agent input shield client identity is unavailable")
+	}
+	if payload.Action == "inventory" {
+		api.agentMutex.Lock()
+		if api.inputDeviceInventories == nil {
+			api.inputDeviceInventories = make(map[string]InputShieldStatusResult)
+		}
+		for owner, inventory := range api.inputDeviceInventories {
+			if inventory.ObservedUTC.IsZero() || api.now().UTC().Sub(inventory.ObservedUTC) > 20*time.Second {
+				delete(api.inputDeviceInventories, owner)
+			}
+		}
+		api.inputDeviceInventories[scope] = InputShieldStatusResult{
+			SessionID: payload.SessionID, State: "disabled", ObservedUTC: payload.ObservedUTC,
+			Devices: append([]AgentInputShieldDevice(nil), payload.Devices...),
+		}
+		api.agentMutex.Unlock()
+		return api.response(request, contracts.MessageTypeAgentInputShieldResult, AgentInputShieldResult{SessionID: payload.SessionID})
+	}
+	control := api.currentInputControlFor(scope)
+	stopping := control.Source == "temporary" && control.State == "stopping" && !control.Enabled
+	if (!control.Enabled && !stopping) || control.ControlID != payload.SessionID {
 		return api.errorResponse(request, ErrorCodeInputShieldUnavailable, "input control is not active")
+	}
+	if stopping && payload.Action != "stopped" {
+		return api.errorResponse(request, ErrorCodeInputShieldUnavailable, "input control is stopping")
 	}
 	payload = applyInputShieldPolicy(payload, control.Policy)
 	if handler != nil && control.Source == "session" {
@@ -626,29 +656,79 @@ func (api *API) recordAgentInputShield(
 			return api.errorResponse(request, ErrorCodeAgentUnavailable, "input shield event could not be recorded")
 		}
 	}
+	if api.inputShieldReportBeforeCommit != nil {
+		api.inputShieldReportBeforeCommit()
+	}
 	api.agentMutex.Lock()
-	api.inputShieldStatus = InputShieldStatusResult{
-		SessionID: payload.SessionID, State: payload.State, HookRunning: payload.HookRunning,
-		DroppedEvents: payload.DroppedEvents, ObservedUTC: payload.ObservedUTC,
-		Devices: append([]AgentInputShieldDevice(nil), payload.Devices...),
+	if control.Source == "temporary" {
+		current := api.inputControl
+		if api.inputControlOwner != scope || current.Source != "temporary" ||
+			current.ControlID != control.ControlID ||
+			(stopping && (current.Enabled || current.State != "stopping")) ||
+			(!stopping && !current.Enabled) {
+			api.agentMutex.Unlock()
+			return api.errorResponse(request, ErrorCodeInputShieldUnavailable, "input control changed before agent report completed")
+		}
+	}
+	if stopping {
+		// The agent is the authority that the low-level hooks are actually gone.
+		// Clear the temporary control only after it acknowledges that transition.
+		api.inputControl = InputControlResult{}
+		api.inputShieldStatus = InputShieldStatusResult{}
+		api.inputControlOwner = ""
+		api.inputShieldStatusOwner = ""
+	} else {
+		api.inputShieldStatus = InputShieldStatusResult{
+			SessionID: payload.SessionID, State: payload.State, HookRunning: payload.HookRunning,
+			DroppedEvents: payload.DroppedEvents, ObservedUTC: payload.ObservedUTC,
+			Devices: append([]AgentInputShieldDevice(nil), payload.Devices...),
+		}
+		api.inputShieldStatusOwner = scope
 	}
 	api.agentMutex.Unlock()
 	return api.response(request, contracts.MessageTypeAgentInputShieldResult, AgentInputShieldResult{SessionID: control.ControlID})
 }
 
-func (api *API) getInputShieldStatus(request contracts.Message) (contracts.Message, error) {
-	control := api.currentInputControl()
+func (api *API) getInputShieldStatus(request contracts.Message, client ClientIdentity) (contracts.Message, error) {
+	scope := client.Principal()
+	control := api.currentInputControlFor(scope)
+	if control.Source == "temporary" && control.State == "stopping" {
+		return api.response(request, contracts.MessageTypeInputShieldStatusResult, InputShieldStatusResult{
+			SessionID: control.ControlID, State: "stopping", ObservedUTC: control.ObservedUTC,
+		})
+	}
+	if !control.Enabled {
+		inventory := api.inputDeviceInventoryFor(scope)
+		return api.response(request, contracts.MessageTypeInputShieldStatusResult, InputShieldStatusResult{
+			State: "disabled", ObservedUTC: inventory.ObservedUTC,
+			Devices: inventory.Devices,
+		})
+	}
 	status := InputShieldStatusResult{SessionID: control.ControlID, State: control.State,
 		HookRunning: control.HookRunning, DroppedEvents: control.DroppedEvents,
 		ObservedUTC: control.ObservedUTC, Devices: append([]AgentInputShieldDevice(nil), control.Devices...)}
+	if !control.Policy.TrackActiveDevices {
+		status.Devices = api.inputDeviceInventoryFor(scope).Devices
+	}
 	return api.response(request, contracts.MessageTypeInputShieldStatusResult, status)
 }
 
-func (api *API) getInputControl(request contracts.Message) (contracts.Message, error) {
-	return api.response(request, contracts.MessageTypeInputControlResult, api.currentInputControl())
+func (api *API) inputDeviceInventoryFor(scope string) InputShieldStatusResult {
+	api.agentMutex.RLock()
+	inventory := api.inputDeviceInventories[scope]
+	api.agentMutex.RUnlock()
+	if scope == "" || inventory.ObservedUTC.IsZero() || api.now().UTC().Sub(inventory.ObservedUTC) > 20*time.Second {
+		return InputShieldStatusResult{}
+	}
+	inventory.Devices = append([]AgentInputShieldDevice(nil), inventory.Devices...)
+	return inventory
 }
 
-func (api *API) startInputControl(ctx context.Context, request contracts.Message) (contracts.Message, error) {
+func (api *API) getInputControl(request contracts.Message, client ClientIdentity) (contracts.Message, error) {
+	return api.response(request, contracts.MessageTypeInputControlResult, api.currentInputControlFor(client.Principal()))
+}
+
+func (api *API) startInputControl(ctx context.Context, request contracts.Message, client ClientIdentity) (contracts.Message, error) {
 	var payload InputControlStartRequest
 	if err := request.DecodePayload(&payload); err != nil ||
 		(!payload.Indefinite && (payload.DurationMinutes < 1 || payload.DurationMinutes > 480)) ||
@@ -668,15 +748,19 @@ func (api *API) startInputControl(ctx context.Context, request contracts.Message
 	if err := validationPolicy.Validate(); err != nil {
 		return api.domainErrorResponse(request, err)
 	}
-	if payload.Policy.CredentialMode == domain.InputShieldCredentialLocal {
-		manager := api.inputShieldCredentialManager()
-		if manager == nil {
-			return api.errorResponse(request, ErrorCodeInputShieldUnavailable, "input shield local credentials are unavailable")
+	scope := client.Principal()
+	if scope == "" {
+		return api.errorResponse(request, ErrorCodeUnauthorized, "client identity is required")
+	}
+	current := api.currentInputControl()
+	api.agentMutex.RLock()
+	currentOwner := api.inputControlOwner
+	api.agentMutex.RUnlock()
+	if current.Source == "temporary" && (current.Enabled || current.State == "stopping") {
+		if currentOwner == scope {
+			return api.errorResponse(request, ErrorCodeInvalidTransition, "stop the current temporary input control before starting another one")
 		}
-		status, err := manager.Status(ctx)
-		if err != nil || !status.Configured {
-			return api.errorResponse(request, ErrorCodeInputShieldUnavailable, "configure an input shield local credential before starting input control")
-		}
+		return api.errorResponse(request, ErrorCodeInputShieldUnavailable, "temporary input control is active in another Windows session")
 	}
 	tokenFactory := api.newChallenge
 	var controlID string
@@ -698,18 +782,59 @@ func (api *API) startInputControl(ctx context.Context, request contracts.Message
 		control.ExpiresUTC = now.Add(time.Duration(payload.DurationMinutes) * time.Minute)
 	}
 	api.agentMutex.Lock()
+	if existing := api.inputControl; existing.Source == "temporary" &&
+		(existing.Enabled || existing.State == "stopping") {
+		owner := api.inputControlOwner
+		api.agentMutex.Unlock()
+		if owner == scope {
+			return api.errorResponse(request, ErrorCodeInvalidTransition, "stop the current temporary input control before starting another one")
+		}
+		return api.errorResponse(request, ErrorCodeInputShieldUnavailable, "temporary input control is active in another Windows session")
+	}
+	if payload.Policy.CredentialMode == domain.InputShieldCredentialLocal {
+		manager := api.inputShieldCredentialManager()
+		if manager == nil {
+			api.agentMutex.Unlock()
+			return api.errorResponse(request, ErrorCodeInputShieldUnavailable, "input shield local credentials are unavailable")
+		}
+		status, err := manager.Status(ctx)
+		if err != nil || !status.Configured {
+			api.agentMutex.Unlock()
+			return api.errorResponse(request, ErrorCodeInputShieldUnavailable, "configure an input shield local credential before starting input control")
+		}
+	}
 	api.inputControl = control
 	api.inputShieldStatus = InputShieldStatusResult{}
+	api.inputControlOwner = scope
+	api.inputShieldStatusOwner = ""
 	api.agentMutex.Unlock()
 	return api.response(request, contracts.MessageTypeInputControlResult, control)
 }
 
-func (api *API) stopInputControl(request contracts.Message) (contracts.Message, error) {
+func (api *API) stopInputControl(request contracts.Message, client ClientIdentity) (contracts.Message, error) {
+	scope := client.Principal()
 	api.agentMutex.Lock()
-	api.inputControl = InputControlResult{}
-	api.inputShieldStatus = InputShieldStatusResult{}
+	if api.inputControlOwner == scope && api.inputControl.Enabled && api.inputControl.Source == "temporary" {
+		api.inputControl.Enabled = false
+		api.inputControl.State = "stopping"
+		api.inputShieldStatus = InputShieldStatusResult{}
+	}
 	api.agentMutex.Unlock()
-	return api.response(request, contracts.MessageTypeInputControlResult, api.currentInputControl())
+	return api.response(request, contracts.MessageTypeInputControlResult, api.currentInputControlFor(scope))
+}
+
+func (api *API) currentInputControlFor(scope string) InputControlResult {
+	control := api.currentInputControl()
+	if control.Source != "temporary" {
+		return control
+	}
+	api.agentMutex.RLock()
+	owner := api.inputControlOwner
+	api.agentMutex.RUnlock()
+	if scope == "" || owner != scope {
+		return InputControlResult{State: "disabled"}
+	}
+	return control
 }
 
 func (api *API) currentInputControl() InputControlResult {
@@ -717,12 +842,16 @@ func (api *API) currentInputControl() InputControlResult {
 	api.agentMutex.Lock()
 	control := api.inputControl
 	if control.Enabled && !control.Indefinite && !control.ExpiresUTC.After(now) {
-		api.inputControl = InputControlResult{}
+		control.Enabled = false
+		control.State = "stopping"
+		api.inputControl = control
 		api.inputShieldStatus = InputShieldStatusResult{}
-		control = InputControlResult{}
 	}
 	status := api.inputShieldStatus
 	api.agentMutex.Unlock()
+	if control.Source == "temporary" && control.State == "stopping" {
+		return control
+	}
 
 	if !control.Enabled {
 		session, ok := api.coordinator.Current()
@@ -748,6 +877,13 @@ func (api *API) currentInputControl() InputControlResult {
 			control.State = "degraded"
 			control.HookRunning = false
 		}
+	} else if control.Source == "temporary" && !control.StartedUTC.IsZero() &&
+		now.Sub(control.StartedUTC) > 3*time.Duration(control.Policy.HookHeartbeatSeconds)*time.Second {
+		// A temporary task is only ready after the interactive agent confirms
+		// the hook. Do not leave an absent or failed agent looking like a
+		// permanent "starting" state.
+		control.State = "degraded"
+		control.HookRunning = false
 	}
 	return control
 }
@@ -760,7 +896,7 @@ func (request AgentInputShieldReportRequest) valid() bool {
 		return false
 	}
 	switch request.Action {
-	case "started", "stopped", "heartbeat", "input_blocked", "device_connected", "device_removed",
+	case "inventory", "started", "stopped", "heartbeat", "input_blocked", "device_connected", "device_removed",
 		"unlock_requested", "unlock_succeeded", "unlock_failed", "hook_degraded":
 	default:
 		return false
@@ -1490,7 +1626,20 @@ func (api *API) deleteInputShieldCredentials(ctx context.Context, request contra
 	if manager == nil {
 		return api.errorResponse(request, ErrorCodeInputShieldUnavailable, "input shield credentials are unavailable")
 	}
-	if err := manager.Delete(ctx); err != nil {
+	control := api.currentInputControl()
+	if control.Enabled && control.Policy.CredentialMode == domain.InputShieldCredentialLocal {
+		return api.errorResponse(request, ErrorCodeInvalidTransition, "stop local-credential input control before deleting its credentials")
+	}
+	api.agentMutex.Lock()
+	control = api.inputControl
+	if control.Source == "temporary" && (control.Enabled || control.State == "stopping") &&
+		control.Policy.CredentialMode == domain.InputShieldCredentialLocal {
+		api.agentMutex.Unlock()
+		return api.errorResponse(request, ErrorCodeInvalidTransition, "stop local-credential input control before deleting its credentials")
+	}
+	err := manager.Delete(ctx)
+	api.agentMutex.Unlock()
+	if err != nil {
 		return api.errorResponse(request, ErrorCodeStorageFailure, "input shield credentials could not be deleted")
 	}
 	return api.response(request, contracts.MessageTypeInputShieldCredentialResult, InputShieldCredentialResult{})
@@ -1502,13 +1651,16 @@ func (api *API) verifyInputShieldCredentials(
 	client ClientIdentity,
 ) (contracts.Message, error) {
 	var payload InputShieldCredentialVerifyRequest
-	if err := request.DecodePayload(&payload); err != nil || len(payload.Password) == 0 {
+	if err := request.DecodePayload(&payload); err != nil || strings.TrimSpace(payload.ControlID) == "" || len(payload.Password) == 0 {
 		return api.errorResponse(request, ErrorCodeInvalidPayload, "input shield verification payload is invalid")
 	}
 	defer clear(payload.Password)
-	control := api.currentInputControl()
+	control := api.currentInputControlFor(client.Principal())
 	if !control.Enabled {
 		return api.errorResponse(request, ErrorCodeInputShieldUnavailable, "input control is not active")
+	}
+	if !strings.EqualFold(control.ControlID, strings.TrimSpace(payload.ControlID)) {
+		return api.errorResponse(request, ErrorCodeInputShieldUnavailable, "input control changed before verification completed")
 	}
 	principal := client.Principal()
 	if principal == "" {
@@ -1528,7 +1680,7 @@ func (api *API) verifyInputShieldCredentials(
 		if err != nil {
 			return api.errorResponse(request, ErrorCodeVerificationFailed, "input shield credential verification failed")
 		}
-		return api.inputShieldVerificationSucceeded(request, control.Policy, control.Source)
+		return api.inputShieldVerificationSucceeded(request, control, principal)
 	}
 	if payload.Recovery || strings.TrimSpace(payload.UserName) == "" {
 		return api.errorResponse(request, ErrorCodeInvalidPayload, "Windows credential verification payload is invalid")
@@ -1552,22 +1704,30 @@ func (api *API) verifyInputShieldCredentials(
 		return api.errorResponse(request, ErrorCodeVerificationFailed, "input shield credential verification failed")
 	}
 	api.clearVerificationFailures(failureKey)
-	return api.inputShieldVerificationSucceeded(request, control.Policy, control.Source)
+	return api.inputShieldVerificationSucceeded(request, control, principal)
 }
 
 func (api *API) inputShieldVerificationSucceeded(
 	request contracts.Message,
-	policy domain.InputShieldPolicy,
-	source string,
+	control InputControlResult,
+	principal string,
 ) (contracts.Message, error) {
-	if source == "temporary" {
+	if control.Source == "temporary" {
 		api.agentMutex.Lock()
+		if api.inputControlOwner != principal || !api.inputControl.Enabled ||
+			api.inputControl.Source != "temporary" || api.inputControl.ControlID != control.ControlID ||
+			(!api.inputControl.Indefinite && !api.inputControl.ExpiresUTC.After(api.now().UTC())) {
+			api.agentMutex.Unlock()
+			return api.errorResponse(request, ErrorCodeInputShieldUnavailable, "input control changed before verification completed")
+		}
 		api.inputControl = InputControlResult{}
 		api.inputShieldStatus = InputShieldStatusResult{}
+		api.inputControlOwner = ""
+		api.inputShieldStatusOwner = ""
 		api.agentMutex.Unlock()
 		return api.response(request, contracts.MessageTypeInputShieldCredentialResult, InputShieldCredentialResult{Verified: true})
 	}
-	if policy.UnlockAction == domain.InputShieldUnlockActionEndSession {
+	if control.Policy.UnlockAction == domain.InputShieldUnlockActionEndSession {
 		for _, state := range []domain.SessionState{domain.SessionStateFinalizing, domain.SessionStateCompleted} {
 			response, err := api.transitionSessionState(request, state)
 			if err != nil || response.Type == contracts.MessageTypeError {

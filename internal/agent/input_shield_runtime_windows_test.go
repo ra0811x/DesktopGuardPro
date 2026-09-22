@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -55,6 +56,34 @@ func TestInputShieldConfigurationUsesStandaloneInputControl(t *testing.T) {
 	}
 }
 
+func TestWindowsInputShieldRuntimeReportsDeviceInventoryWhileControlIsDisabled(t *testing.T) {
+	client := &fakeInputShieldRuntimeClient{}
+	tracker := newFakeInputShieldDeviceTracker()
+	runtime := &windowsInputShieldRuntime{
+		client: client, newEngine: func() inputShieldEngine { return newFakeInputShieldEngine() },
+		newOverlay: func() inputShieldOverlay { return &fakeInputShieldOverlay{} },
+		newTracker: func() inputShieldDeviceTracker { return tracker },
+		prompt: func(inputShieldEngine, domain.InputShieldPolicy) (coreservice.InputShieldCredentialVerifyRequest, error) {
+			return coreservice.InputShieldCredentialVerifyRequest{}, nil
+		}, pollInterval: time.Hour,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(ctx) }()
+	inventory := waitForInputShieldReport(t, client, "inventory")
+	if inventory.SessionID != inputShieldInventorySessionID || inventory.State != "disabled" ||
+		len(inventory.Devices) != 1 || !tracker.started {
+		t.Fatalf("device inventory = %+v, tracker started = %v", inventory, tracker.started)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !tracker.stopped {
+		t.Fatal("device tracker was not stopped")
+	}
+}
+
 func TestWindowsInputShieldRuntimeVerifiesUnlockAsynchronously(t *testing.T) {
 	client := &fakeInputShieldRuntimeClient{configuration: enabledInputShieldConfiguration()}
 	engine := newFakeInputShieldEngine()
@@ -75,6 +104,63 @@ func TestWindowsInputShieldRuntimeVerifiesUnlockAsynchronously(t *testing.T) {
 	waitForInputShieldReport(t, client, "unlock_succeeded")
 	if engine.state != inputShieldSuspended || client.verifyCalls != 1 {
 		t.Fatalf("unlock state = %d, verify calls = %d", engine.state, client.verifyCalls)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWindowsInputShieldRuntimeIgnoresVerificationForReplacedControl(t *testing.T) {
+	client := &fakeInputShieldRuntimeClient{configuration: enabledInputShieldConfiguration()}
+	first := newFakeInputShieldEngine()
+	second := newFakeInputShieldEngine()
+	engines := []inputShieldEngine{first, second}
+	promptStarted := make(chan struct{})
+	releasePrompt := make(chan struct{})
+	runtime := &windowsInputShieldRuntime{
+		client: client,
+		newEngine: func() inputShieldEngine {
+			engine := engines[0]
+			engines = engines[1:]
+			return engine
+		},
+		newOverlay: func() inputShieldOverlay { return &fakeInputShieldOverlay{} },
+		newTracker: func() inputShieldDeviceTracker { return newFakeInputShieldDeviceTracker() },
+		prompt: func(inputShieldEngine, domain.InputShieldPolicy) (coreservice.InputShieldCredentialVerifyRequest, error) {
+			close(promptStarted)
+			<-releasePrompt
+			return coreservice.InputShieldCredentialVerifyRequest{Password: []byte("correct-password")}, nil
+		},
+		pollInterval: 5 * time.Millisecond,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(ctx) }()
+	waitForInputShieldReport(t, client, "started")
+	first.state = inputShieldVerifying
+	first.unlock <- struct{}{}
+	select {
+	case <-promptStarted:
+	case <-time.After(time.Second):
+		t.Fatal("unlock prompt did not start")
+	}
+
+	secondConfiguration := enabledInputShieldConfiguration()
+	secondConfiguration.SessionID = "session-2"
+	client.SetConfiguration(secondConfiguration)
+	waitForInputShieldReport(t, client, "started")
+	if !first.stopped || !second.started {
+		t.Fatalf("control replacement first stopped=%v second started=%v", first.stopped, second.started)
+	}
+	close(releasePrompt)
+	verification := waitForInputShieldVerification(t, client)
+	if verification.ControlID != "session-1" {
+		t.Fatalf("verification control ID = %q, want session-1", verification.ControlID)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if second.completeCalls != 0 || second.state != inputShieldProtecting {
+		t.Fatalf("stale verification changed replacement engine: calls=%d state=%d", second.completeCalls, second.state)
 	}
 	cancel()
 	if err := <-done; err != nil {
@@ -121,20 +207,85 @@ func TestWindowsInputShieldRuntimeReportsAndRestartsUnhealthyHook(t *testing.T) 
 	}
 }
 
+func TestWindowsInputShieldRuntimeAcknowledgesStopAfterFailedStart(t *testing.T) {
+	configuration := enabledInputShieldConfiguration()
+	configuration.Policy.ShowWarningOverlay = false
+	configuration.Policy.TrackActiveDevices = false
+	configuration.Policy.WarnOnDeviceArrival = false
+	configuration.Policy.RecordDeviceRemoval = false
+	client := &fakeInputShieldRuntimeClient{configuration: configuration}
+	engine := newFakeInputShieldEngine()
+	engine.startErr = errors.New("hook could not start")
+	runtime := &windowsInputShieldRuntime{
+		client: client, newEngine: func() inputShieldEngine { return engine },
+	}
+	runtime.reconcile(context.Background())
+	waitForInputShieldReport(t, client, "hook_degraded")
+	client.SetConfiguration(inputShieldSessionConfiguration{SessionID: configuration.SessionID})
+	runtime.reconcile(context.Background())
+	stopped := waitForInputShieldReport(t, client, "stopped")
+	if stopped.SessionID != configuration.SessionID || stopped.HookRunning {
+		t.Fatalf("stop acknowledgement after failed start = %+v", stopped)
+	}
+}
+
+func TestWindowsInputShieldRuntimeAcknowledgesStoppedControlAfterAgentRestart(t *testing.T) {
+	client := &fakeInputShieldRuntimeClient{configuration: inputShieldSessionConfiguration{SessionID: "stopping-task"}}
+	runtime := &windowsInputShieldRuntime{client: client}
+	runtime.reconcile(context.Background())
+	stopped := waitForInputShieldReport(t, client, "stopped")
+	if stopped.SessionID != "stopping-task" || stopped.HookRunning {
+		t.Fatalf("new agent stop acknowledgement = %+v", stopped)
+	}
+}
+
+func TestWindowsInputShieldRuntimeRetriesFailedStopAcknowledgement(t *testing.T) {
+	configuration := enabledInputShieldConfiguration()
+	configuration.Policy.ShowWarningOverlay = false
+	configuration.Policy.TrackActiveDevices = false
+	configuration.Policy.WarnOnDeviceArrival = false
+	configuration.Policy.RecordDeviceRemoval = false
+	client := &fakeInputShieldRuntimeClient{configuration: configuration, failStoppedReports: 1}
+	engine := newFakeInputShieldEngine()
+	runtime := &windowsInputShieldRuntime{
+		client: client, newEngine: func() inputShieldEngine { return engine },
+	}
+	runtime.reconcile(context.Background())
+	waitForInputShieldReport(t, client, "started")
+	client.SetConfiguration(inputShieldSessionConfiguration{SessionID: configuration.SessionID})
+	runtime.reconcile(context.Background())
+	waitForInputShieldReport(t, client, "stopped")
+	runtime.reconcile(context.Background())
+	stopped := waitForInputShieldReport(t, client, "stopped")
+	if stopped.SessionID != configuration.SessionID || !engine.stopped {
+		t.Fatalf("retried stop acknowledgement = %+v, engine stopped = %v", stopped, engine.stopped)
+	}
+}
+
 func enabledInputShieldConfiguration() inputShieldSessionConfiguration {
 	policy := domain.DefaultMonitoringPolicy().InputShield
 	return inputShieldSessionConfiguration{SessionID: "session-1", Enabled: true, Policy: policy}
 }
 
 type fakeInputShieldRuntimeClient struct {
-	configuration inputShieldSessionConfiguration
-	reports       chan coreservice.AgentInputShieldReportRequest
-	mu            sync.Mutex
-	verifyCalls   int
+	configuration      inputShieldSessionConfiguration
+	reports            chan coreservice.AgentInputShieldReportRequest
+	verifications      chan coreservice.InputShieldCredentialVerifyRequest
+	mu                 sync.Mutex
+	verifyCalls        int
+	failStoppedReports int
 }
 
 func (client *fakeInputShieldRuntimeClient) Current(context.Context) (inputShieldSessionConfiguration, error) {
+	client.mu.Lock()
+	defer client.mu.Unlock()
 	return client.configuration, nil
+}
+
+func (client *fakeInputShieldRuntimeClient) SetConfiguration(configuration inputShieldSessionConfiguration) {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	client.configuration = configuration
 }
 
 func (client *fakeInputShieldRuntimeClient) Report(_ context.Context, report coreservice.AgentInputShieldReportRequest) error {
@@ -143,16 +294,45 @@ func (client *fakeInputShieldRuntimeClient) Report(_ context.Context, report cor
 		client.reports = make(chan coreservice.AgentInputShieldReportRequest, 16)
 	}
 	reports := client.reports
+	fail := report.Action == "stopped" && client.failStoppedReports > 0
+	if fail {
+		client.failStoppedReports--
+	}
 	client.mu.Unlock()
 	reports <- report
+	if fail {
+		return errors.New("stop acknowledgement failed")
+	}
 	return nil
 }
 
-func (client *fakeInputShieldRuntimeClient) Verify(context.Context, coreservice.InputShieldCredentialVerifyRequest) error {
+func (client *fakeInputShieldRuntimeClient) Verify(_ context.Context, request coreservice.InputShieldCredentialVerifyRequest) error {
 	client.mu.Lock()
 	client.verifyCalls++
+	if client.verifications == nil {
+		client.verifications = make(chan coreservice.InputShieldCredentialVerifyRequest, 4)
+	}
+	verifications := client.verifications
 	client.mu.Unlock()
+	verifications <- request
 	return nil
+}
+
+func waitForInputShieldVerification(t *testing.T, client *fakeInputShieldRuntimeClient) coreservice.InputShieldCredentialVerifyRequest {
+	t.Helper()
+	client.mu.Lock()
+	if client.verifications == nil {
+		client.verifications = make(chan coreservice.InputShieldCredentialVerifyRequest, 4)
+	}
+	verifications := client.verifications
+	client.mu.Unlock()
+	select {
+	case request := <-verifications:
+		return request
+	case <-time.After(time.Second):
+		t.Fatal("input shield verification was not received")
+		return coreservice.InputShieldCredentialVerifyRequest{}
+	}
 }
 
 func waitForInputShieldReport(t *testing.T, client *fakeInputShieldRuntimeClient, action string) coreservice.AgentInputShieldReportRequest {
@@ -177,12 +357,14 @@ func waitForInputShieldReport(t *testing.T, client *fakeInputShieldRuntimeClient
 }
 
 type fakeInputShieldEngine struct {
-	started bool
-	stopped bool
-	healthy bool
-	state   inputShieldState
-	events  chan BlockedInputEvent
-	unlock  chan struct{}
+	started       bool
+	stopped       bool
+	startErr      error
+	healthy       bool
+	state         inputShieldState
+	completeCalls int
+	events        chan BlockedInputEvent
+	unlock        chan struct{}
 }
 
 func newFakeInputShieldEngine() *fakeInputShieldEngine {
@@ -190,6 +372,9 @@ func newFakeInputShieldEngine() *fakeInputShieldEngine {
 }
 
 func (engine *fakeInputShieldEngine) Start(domain.InputShieldPolicy) error {
+	if engine.startErr != nil {
+		return engine.startErr
+	}
 	engine.started = true
 	engine.state = inputShieldProtecting
 	return nil
@@ -204,6 +389,7 @@ func (engine *fakeInputShieldEngine) DroppedEvents() uint64            { return 
 func (engine *fakeInputShieldEngine) State() inputShieldState          { return engine.state }
 func (engine *fakeInputShieldEngine) Healthy() bool                    { return engine.healthy }
 func (engine *fakeInputShieldEngine) CompleteVerification(success bool) {
+	engine.completeCalls++
 	if success {
 		engine.state = inputShieldSuspended
 	} else {

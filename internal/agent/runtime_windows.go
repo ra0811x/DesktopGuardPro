@@ -34,6 +34,7 @@ var (
 	callNextHookEx             = user32.NewProc("CallNextHookEx")
 	unhookWindowsHookEx        = user32.NewProc("UnhookWindowsHookEx")
 	getMessage                 = user32.NewProc("GetMessageW")
+	peekMessage                = user32.NewProc("PeekMessageW")
 	lastInputInfoSize   uint32 = uint32(unsafe.Sizeof(lastInputInfo{}))
 )
 

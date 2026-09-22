@@ -4,20 +4,22 @@ Desktop Guard Pro 是面向 Windows x64 的本机保护与审计应用。它通�
 用户会话代理、原生桌面界面和维护程序，记录保护期间的文件、进程、软件、设备、
 账户和系统配置变化，并提供风险分析、完整性校验和报告导出。
 
-本文按 2026 年 9 月 17 日的工作区源码和 `2.11.30` 发布物核对。当前安装包使用
+本文按 2026 年 9 月 22 日的工作区源码和 `2.11.35` 发布物核对。当前安装包使用
 测试代码签名证书，适合开发、测试和验收环境。
 
 ## 当前版本
 
-当前发布版本为 `2.11.30`，安装包位于项目的 `dist/releases` 目录。旧版本存放在
-`dist/releases/archive`。
+当前发布版本为 `2.11.35`，安装包位于项目的 `dist/releases` 目录。该版本修复
+临时输入控制的并发启动、旧任务验证影响新任务、停止确认重试、设备清单串扰、
+规则保存反馈和解锁提示，并校正原生界面的发布版本信息。历史安装包保留在
+`dist/releases`，归档文件位于 `dist/releases/archive`。
 
 - 安装包：
-  [`DesktopGuardPro-2.11.30-windows-amd64.msi`](dist/releases/DesktopGuardPro-2.11.30-windows-amd64.msi)
+  [`DesktopGuardPro-2.11.35-windows-amd64.msi`](dist/releases/DesktopGuardPro-2.11.35-windows-amd64.msi)
 - 构建回执：
-  [`DesktopGuardPro-2.11.30-windows-amd64.msi.build.json`](dist/releases/DesktopGuardPro-2.11.30-windows-amd64.msi.build.json)
+  [`DesktopGuardPro-2.11.35-windows-amd64.msi.build.json`](dist/releases/DesktopGuardPro-2.11.35-windows-amd64.msi.build.json)
 - SHA-256：
-  `468B5B2D6909F4CA7DE6F7D004BFAB324B59BC629234A3B58B12598E95C3E6E7`
+  `BDB2A8E6155221B4C19756FEA4E6EE9E469A98833FF39B5C66F2BE7A56180CF5`
 - 签名者：`CN=Desktop Guard Pro Test Signing`
 - 证书指纹：`E20E6C2B305777D52341C14E2DC67E0A2E1522FD`
 
@@ -27,7 +29,7 @@ Desktop Guard Pro 是面向 Windows x64 的本机保护与审计应用。它通�
 ## 产品能力
 
 工作区验收矩阵记录了早期 FR-001 至 FR-097 共 72 条功能需求。该矩阵尚未覆盖
-`2.11.30` 的全部模式配置与临时输入控制场景。涉及 Windows 版本、管理员权限、
+`2.11.35` 的全部模式配置与临时输入控制场景。涉及 Windows 版本、管理员权限、
 硬件和异常恢复的场景仍需在目标设备验证。详细条件见
 [`docs/requirements-acceptance-matrix.md`](docs/requirements-acceptance-matrix.md)。
 
@@ -75,7 +77,8 @@ Desktop Guard Pro 是面向 Windows x64 的本机保护与审计应用。它通�
 仪表盘按照 **保护概览**、**快速操作**、**监控范围** 和 **运行信息** 四个横向
 区块排列。同排模块保持等宽、等高和统一内边距，底部操作按钮使用同一基线。
 模式与会话名称、键盘与鼠标控制均采用紧凑双列；低频输入管理功能集中在
-**高级设置与设备** 浮层，避免单个模块撑高后产生不规则空白。
+**高级设置与设备** 浮层。浮层将操作分成 **控制与设备** 和 **本地凭据** 两组，
+采用等宽按钮并关闭横向滚动，缩放窗口时仍能保持清晰间距。
 
 顶部菜单包含 **文件**、**编辑**、**查看** 和 **设置**。菜单提供保护操作、
 页面跳转、监控配置、隐私选项、刷新和导航栏控制。应用图标用于窗口、安装程序、
@@ -120,15 +123,17 @@ Ctrl+Alt+Delete 的安全桌面。
 
 在 **仪表盘** 的 **临时输入控制** 区域，可分别选择禁用本地键盘、本地鼠标，
 或同时禁用两者。结束方式可选择 1–480 分钟后自动释放，或持续到验证解锁。默认
-按 **Ctrl+Alt+Space** 呼出身份验证窗口。密码验证成功、手动停止或定时到期后，
-代理会释放本地输入。服务或系统重启后不会自动重新锁定。
+按 **Ctrl+Alt+Space** 呼出身份验证窗口。触发后键盘和鼠标会临时放开 20 秒，
+供你输入凭据；密码验证成功、手动停止或定时到期后，代理会释放本地输入。服务
+或系统重启后不会自动重新锁定。
 
 临时输入控制可以在没有保护会话时运行，不会自动启动文件、网络、USB 或用户活动
 审计。它与保护会话并行时，两条生命周期彼此独立。临时控制运行期间，用户会话
 活动中的键盘、鼠标和高风险快捷键计数会暂停，前台应用与窗口标题可继续采集。
 输入拦截报告不会写入保护会话的审计时间线。详细策略、运行状态、设备清单、本地
-密码和恢复码通过仪表盘的 **高级设置与设备** 入口维护。输入控制需要当前用户
-会话中的代理进程运行。
+密码和恢复码通过仪表盘的 **高级设置与设备** 入口维护。设备清单由会话代理持续
+维护，未启动临时控制时也可刷新查看；设置或删除本地密码后，界面会显示明确的
+成功或失败反馈。输入控制需要当前用户会话中的代理进程运行。
 
 ## 文件、进程和输入采集
 
@@ -189,7 +194,7 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 1. 结束正在进行的保护会话。
 2. 关闭 Desktop Guard Pro 主窗口。
 3. 打开
-   [`DesktopGuardPro-2.11.30-windows-amd64.msi`](dist/releases/DesktopGuardPro-2.11.30-windows-amd64.msi)。
+   [`DesktopGuardPro-2.11.35-windows-amd64.msi`](dist/releases/DesktopGuardPro-2.11.35-windows-amd64.msi)。
 4. 确认管理员权限和测试发布者提示。
 5. 选择安装目录和桌面快捷方式选项。
 6. 等待服务安装、启动和健康检查完成。
@@ -223,7 +228,7 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 当前发布流程从
 `native/DesktopGuardPro.Native/DesktopGuardPro.Native.csproj` 生成桌面界面。
 `frontend/` 和 `cmd/desktop-guard-ui/` 保留用于兼容与自动化验证，不会作为
-`2.11.30` MSI 的主界面载入。
+`2.11.35` MSI 的主界面载入。
 
 ## 开发环境
 
@@ -250,7 +255,7 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 
 ```powershell
 go run ./cmd/desktop-guard-release `
-  --version 2.11.30 `
+  --version 2.11.35 `
   --output dist\staging
 ```
 
@@ -267,7 +272,7 @@ dotnet build `
 
 ```powershell
 $msiArguments = @{
-  Version = '2.11.30'
+  Version = '2.11.35'
   OutputDirectory = 'dist\releases'
   CertificateStore = 'LocalMachine'
   CertificateThumbprint = '<certificate-thumbprint>'
@@ -299,8 +304,8 @@ go vet ./...
 
 $nativeUiTest = @{
   ExecutablePath = `
-    'dist\staging\DesktopGuardPro-2.11.30-windows-amd64\desktop-guard-ui.exe'
-  ExpectedVersion = '2.11.30'
+    'dist\staging\DesktopGuardPro-2.11.35-windows-amd64\desktop-guard-ui.exe'
+  ExpectedVersion = '2.11.35'
 }
 .\scripts\test-native-ui-release.ps1 @nativeUiTest
 ```
@@ -330,7 +335,8 @@ go test ./internal/storage -run TestStorageScale -count=1
 Remove-Item Env:DGP_STORAGE_SCALE_TEST
 ```
 
-`2.11.30` 发布时通过 Go 模块校验、全量测试和 `go vet`；保留的 Vue 前端通过
+`2.11.35` 发布源码通过 Go 模块校验、除本机代理单实例互斥用例外的全量测试和
+`go vet`；保留的 Vue 前端通过
 类型检查、83 项测试和生产构建；原生界面 Release 编译结果为 0 警告、0 错误。
 界面结构门禁、MSI 发布门禁、WiX 和 ICE 检查、组件与 MSI 的 Authenticode
 签名验证、产品版本及构建回执 SHA-256 核对均已通过。尚未在目标设备执行安装

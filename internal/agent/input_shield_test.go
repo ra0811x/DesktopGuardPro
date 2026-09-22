@@ -3,6 +3,7 @@ package agent
 import (
 	"reflect"
 	"testing"
+	"time"
 	"unsafe"
 
 	"desktopguardpro/internal/domain"
@@ -65,8 +66,89 @@ func TestInputShieldUnlockCombinationEntersVerification(t *testing.T) {
 	if !decision.Block || !decision.TriggerUnlock || controller.State() != inputShieldVerifying {
 		t.Fatalf("decision = %+v, state = %d", decision, controller.State())
 	}
+	if decision := controller.Decide(shieldInputEvent{Kind: shieldInputKeyboard, KeyCode: 0x41, Down: true}); decision.Block {
+		t.Fatal("verification grace period must allow physical keyboard input")
+	}
+}
+
+func TestInputShieldMouseOnlyControlCanTriggerUnlock(t *testing.T) {
+	for _, trigger := range []domain.InputShieldUnlockTrigger{
+		domain.InputShieldUnlockTriggerCombination, domain.InputShieldUnlockTriggerTap,
+	} {
+		t.Run(string(trigger), func(t *testing.T) {
+			policy := domain.DefaultMonitoringPolicy().InputShield
+			policy.BlockPhysicalKeyboard = false
+			policy.UnlockTrigger = trigger
+			policy.UnlockTapCount = 3
+			controller := newInputShieldController()
+			controller.Protect(policy)
+			if decision := controller.Decide(shieldInputEvent{Kind: shieldInputMouseButton, Down: true}); !decision.Block {
+				t.Fatalf("mouse input was not blocked: %+v", decision)
+			}
+			var decision shieldInputDecision
+			if trigger == domain.InputShieldUnlockTriggerCombination {
+				controller.Decide(shieldInputEvent{Kind: shieldInputKeyboard, KeyCode: 0x11, Down: true})
+				controller.Decide(shieldInputEvent{Kind: shieldInputKeyboard, KeyCode: 0x12, Down: true})
+				decision = controller.Decide(shieldInputEvent{Kind: shieldInputKeyboard, KeyCode: 0x20, Down: true})
+			} else {
+				for index := 0; index < policy.UnlockTapCount; index++ {
+					decision = controller.Decide(shieldInputEvent{
+						Kind: shieldInputKeyboard, KeyCode: policy.UnlockKeyCode,
+						Down: true, TimestampMS: uint32(100 + 100*index),
+					})
+					controller.Decide(shieldInputEvent{Kind: shieldInputKeyboard, KeyCode: policy.UnlockKeyCode, Down: false})
+				}
+			}
+			if decision.Block || !decision.TriggerUnlock || controller.State() != inputShieldVerifying {
+				t.Fatalf("mouse-only unlock decision = %+v, state = %d", decision, controller.State())
+			}
+		})
+	}
+}
+
+func TestInputShieldVerificationGracePeriodExpiresAfterTwentySeconds(t *testing.T) {
+	policy := domain.DefaultMonitoringPolicy().InputShield
+	controller := newInputShieldController()
+	controller.Protect(policy)
+	if !controller.BeginVerification() {
+		t.Fatal("BeginVerification() = false")
+	}
+
+	for _, event := range []shieldInputEvent{
+		{Kind: shieldInputKeyboard, KeyCode: 0x41, Down: true},
+		{Kind: shieldInputMouseButton, Down: true},
+		{Kind: shieldInputMouseMove},
+	} {
+		if decision := controller.Decide(event); decision.Block {
+			t.Fatalf("grace-period event %+v was blocked: %+v", event, decision)
+		}
+	}
+
+	controller.verificationGraceUntil.Store(time.Now().Add(-time.Second).UnixNano())
 	if decision := controller.Decide(shieldInputEvent{Kind: shieldInputKeyboard, KeyCode: 0x41, Down: true}); !decision.Block {
-		t.Fatal("verification must keep unrelated physical input blocked")
+		t.Fatalf("input after the 20-second grace period was not blocked: %+v", decision)
+	}
+	if decision := controller.Decide(shieldInputEvent{
+		Kind: shieldInputKeyboard, KeyCode: 0x41, Down: true, VerificationTarget: true,
+	}); decision.Block {
+		t.Fatalf("verification target after grace period was blocked: %+v", decision)
+	}
+}
+
+func TestInputShieldFailedVerificationClearsUnlockChordState(t *testing.T) {
+	policy := domain.DefaultMonitoringPolicy().InputShield
+	controller := newInputShieldController()
+	controller.Protect(policy)
+	controller.Decide(shieldInputEvent{Kind: shieldInputKeyboard, KeyCode: 0x11, Down: true})
+	controller.Decide(shieldInputEvent{Kind: shieldInputKeyboard, KeyCode: 0x12, Down: true})
+	if decision := controller.Decide(shieldInputEvent{Kind: shieldInputKeyboard, KeyCode: 0x20, Down: true}); !decision.TriggerUnlock {
+		t.Fatalf("unlock decision = %+v", decision)
+	}
+	controller.CompleteVerification(false)
+
+	decision := controller.Decide(shieldInputEvent{Kind: shieldInputKeyboard, KeyCode: 0x20, Down: true})
+	if decision.TriggerUnlock {
+		t.Fatalf("stale modifier state retriggered verification: %+v", decision)
 	}
 }
 
@@ -127,6 +209,7 @@ func TestInputShieldVerificationOnlyAllowsRegisteredTarget(t *testing.T) {
 	if !controller.BeginVerification() {
 		t.Fatal("BeginVerification() = false")
 	}
+	controller.verificationGraceUntil.Store(time.Now().Add(-time.Second).UnixNano())
 
 	allowed := controller.Decide(shieldInputEvent{
 		Kind: shieldInputKeyboard, KeyCode: 0x41, Down: true, VerificationTarget: true,

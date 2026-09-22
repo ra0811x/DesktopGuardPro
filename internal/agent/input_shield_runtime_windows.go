@@ -10,7 +10,11 @@ import (
 	coreservice "desktopguardpro/internal/service"
 )
 
-const inputShieldPolicyPollInterval = time.Second
+const (
+	inputShieldPolicyPollInterval      = time.Second
+	inputShieldInventoryReportInterval = 5 * time.Second
+	inputShieldInventorySessionID      = "device-inventory"
+)
 
 type inputShieldSessionConfiguration struct {
 	SessionID string
@@ -51,6 +55,12 @@ type inputShieldDeviceTracker interface {
 
 type inputShieldPrompt func(inputShieldEngine, domain.InputShieldPolicy) (coreservice.InputShieldCredentialVerifyRequest, error)
 
+type inputShieldVerificationResult struct {
+	controlID  string
+	generation uint64
+	err        error
+}
+
 type windowsInputShieldRuntime struct {
 	client       inputShieldRuntimeClient
 	newEngine    func() inputShieldEngine
@@ -59,11 +69,12 @@ type windowsInputShieldRuntime struct {
 	prompt       inputShieldPrompt
 	pollInterval time.Duration
 
-	engine  inputShieldEngine
-	overlay inputShieldOverlay
-	tracker inputShieldDeviceTracker
-	active  bool
-	session inputShieldSessionConfiguration
+	engine     inputShieldEngine
+	overlay    inputShieldOverlay
+	tracker    inputShieldDeviceTracker
+	active     bool
+	session    inputShieldSessionConfiguration
+	generation uint64
 }
 
 func newWindowsInputShieldRuntime() *windowsInputShieldRuntime {
@@ -94,8 +105,14 @@ func (runtime *windowsInputShieldRuntime) Run(ctx context.Context) error {
 	heartbeat := time.NewTicker(time.Second)
 	defer poll.Stop()
 	defer heartbeat.Stop()
-	verificationResults := make(chan error, 1)
+	verificationResults := make(chan inputShieldVerificationResult, 2)
 	lastHeartbeat := time.Time{}
+	lastInventoryReport := time.Time{}
+	runtime.startDeviceTracker(ctx)
+	if runtime.tracker != nil {
+		runtime.reportDeviceInventory(ctx)
+		lastInventoryReport = time.Now()
+	}
 	runtime.reconcile(ctx)
 	for {
 		var blockedEvents <-chan BlockedInputEvent
@@ -104,19 +121,24 @@ func (runtime *windowsInputShieldRuntime) Run(ctx context.Context) error {
 		if runtime.active {
 			blockedEvents = runtime.engine.Events()
 			unlockRequests = runtime.engine.UnlockRequests()
-			if runtime.tracker != nil {
-				deviceEvents = runtime.tracker.Events()
-			}
+		}
+		if runtime.tracker != nil {
+			deviceEvents = runtime.tracker.Events()
 		}
 		select {
 		case <-ctx.Done():
 			stopContext, cancel := context.WithTimeout(context.Background(), agentRequestTimeout)
 			runtime.stop(stopContext)
+			runtime.stopDeviceTracker()
 			cancel()
 			return nil
 		case <-poll.C:
 			runtime.reconcile(ctx)
 		case <-heartbeat.C:
+			if runtime.tracker != nil && (lastInventoryReport.IsZero() || time.Since(lastInventoryReport) >= inputShieldInventoryReportInterval) {
+				runtime.reportDeviceInventory(ctx)
+				lastInventoryReport = time.Now()
+			}
 			if runtime.active && !runtime.engine.Healthy() {
 				runtime.reportState(ctx, "hook_degraded", "degraded", false)
 				runtime.stopComponents(ctx, false)
@@ -132,9 +154,16 @@ func (runtime *windowsInputShieldRuntime) Run(ctx context.Context) error {
 			runtime.handleBlockedInput(ctx, event)
 		case <-unlockRequests:
 			runtime.report(ctx, "unlock_requested", nil, nil)
-			go runtime.verifyUnlock(ctx, verificationResults)
-		case err := <-verificationResults:
-			success := err == nil
+			go runtime.verifyUnlock(ctx, verificationResults, runtime.session.SessionID, runtime.generation,
+				runtime.engine, runtime.session.Policy)
+		case result := <-verificationResults:
+			if !runtime.active || runtime.engine == nil || runtime.generation != result.generation ||
+				runtime.session.SessionID != result.controlID {
+				// The task was stopped or replaced while its prompt was open. Its
+				// result must never change the replacement task's hook state.
+				continue
+			}
+			success := result.err == nil
 			runtime.engine.CompleteVerification(success)
 			action := "unlock_succeeded"
 			if !success {
@@ -145,7 +174,9 @@ func (runtime *windowsInputShieldRuntime) Run(ctx context.Context) error {
 			}
 			runtime.report(ctx, action, nil, nil)
 		case event := <-deviceEvents:
-			runtime.handleDeviceChange(ctx, event)
+			if runtime.active {
+				runtime.handleDeviceChange(ctx, event)
+			}
 		}
 	}
 }
@@ -167,11 +198,21 @@ func (runtime *windowsInputShieldRuntime) reconcile(ctx context.Context) {
 	}
 	if runtime.active {
 		runtime.stop(ctx)
+		return
 	}
+	if configuration.SessionID != "" {
+		// The service keeps the control ID until it receives a stop acknowledgement.
+		// Retry after a failed report, including when the hook never started.
+		runtime.session = configuration
+		runtime.reportState(ctx, "stopped", "disabled", false)
+	}
+	runtime.engine = nil
+	runtime.session = inputShieldSessionConfiguration{}
 }
 
 func (runtime *windowsInputShieldRuntime) start(ctx context.Context, configuration inputShieldSessionConfiguration) {
 	runtime.session = configuration
+	runtime.generation++
 	runtime.engine = runtime.newEngine()
 	if configuration.Policy.ShowWarningOverlay {
 		runtime.overlay = runtime.newOverlay()
@@ -181,23 +222,15 @@ func (runtime *windowsInputShieldRuntime) start(ctx context.Context, configurati
 			return
 		}
 	}
-	if configuration.Policy.TrackActiveDevices || configuration.Policy.WarnOnDeviceArrival || configuration.Policy.RecordDeviceRemoval {
-		runtime.tracker = runtime.newTracker()
-		if err := runtime.tracker.Start(); err != nil {
-			if runtime.overlay != nil {
-				runtime.overlay.Stop()
-				runtime.overlay = nil
-			}
-			runtime.tracker = nil
-			runtime.reportState(ctx, "hook_degraded", "degraded", false)
-			return
+	if (configuration.Policy.TrackActiveDevices || configuration.Policy.WarnOnDeviceArrival || configuration.Policy.RecordDeviceRemoval) && runtime.tracker == nil {
+		if runtime.overlay != nil {
+			runtime.overlay.Stop()
+			runtime.overlay = nil
 		}
+		runtime.reportState(ctx, "hook_degraded", "degraded", false)
+		return
 	}
 	if err := runtime.engine.Start(configuration.Policy); err != nil {
-		if runtime.tracker != nil {
-			runtime.tracker.Stop()
-			runtime.tracker = nil
-		}
 		if runtime.overlay != nil {
 			runtime.overlay.Stop()
 			runtime.overlay = nil
@@ -219,12 +252,9 @@ func (runtime *windowsInputShieldRuntime) stopComponents(ctx context.Context, re
 	}
 	runtime.engine.Stop()
 	runtime.active = false
+	runtime.generation++
 	if reportStopped {
 		runtime.reportState(ctx, "stopped", "disabled", false)
-	}
-	if runtime.tracker != nil {
-		runtime.tracker.Stop()
-		runtime.tracker = nil
 	}
 	if runtime.overlay != nil {
 		runtime.overlay.Stop()
@@ -232,6 +262,46 @@ func (runtime *windowsInputShieldRuntime) stopComponents(ctx context.Context, re
 	}
 	runtime.engine = nil
 	runtime.session = inputShieldSessionConfiguration{}
+}
+
+func (runtime *windowsInputShieldRuntime) startDeviceTracker(ctx context.Context) {
+	runtime.tracker = runtime.newTracker()
+	if runtime.tracker == nil || runtime.tracker.Start() == nil {
+		return
+	}
+	runtime.tracker = nil
+	runtime.reportState(ctx, "hook_degraded", "degraded", false)
+}
+
+func (runtime *windowsInputShieldRuntime) stopDeviceTracker() {
+	if runtime.tracker != nil {
+		runtime.tracker.Stop()
+		runtime.tracker = nil
+	}
+}
+
+func (runtime *windowsInputShieldRuntime) reportDeviceInventory(ctx context.Context) {
+	if runtime.tracker == nil {
+		return
+	}
+	devices := runtime.tracker.Snapshot()
+	if len(devices) > 64 {
+		devices = devices[:64]
+	}
+	report := coreservice.AgentInputShieldReportRequest{
+		SessionID: inputShieldInventorySessionID, Action: "inventory", State: "disabled",
+		ObservedUTC: time.Now().UTC(), Devices: make([]coreservice.AgentInputShieldDevice, 0, len(devices)),
+	}
+	for _, inputDevice := range devices {
+		report.Devices = append(report.Devices, coreservice.AgentInputShieldDevice{
+			Kind: inputDevice.Kind, InterfacePath: inputDevice.InterfacePath, InstanceID: inputDevice.InstanceID,
+			VendorID: inputDevice.VendorID, ProductID: inputDevice.ProductID,
+			Active: inputDevice.Active, LastActiveUTC: inputDevice.LastActiveUTC,
+		})
+	}
+	reportContext, cancel := context.WithTimeout(ctx, agentRequestTimeout)
+	defer cancel()
+	_ = runtime.client.Report(reportContext, report)
 }
 
 func (runtime *windowsInputShieldRuntime) handleBlockedInput(ctx context.Context, event BlockedInputEvent) {
@@ -272,14 +342,23 @@ func (runtime *windowsInputShieldRuntime) handleDeviceChange(ctx context.Context
 	runtime.report(ctx, action, nil, device)
 }
 
-func (runtime *windowsInputShieldRuntime) verifyUnlock(ctx context.Context, result chan<- error) {
-	request, err := runtime.prompt(runtime.engine, runtime.session.Policy)
+func (runtime *windowsInputShieldRuntime) verifyUnlock(
+	ctx context.Context,
+	result chan<- inputShieldVerificationResult,
+	controlID string,
+	generation uint64,
+	engine inputShieldEngine,
+	policy domain.InputShieldPolicy,
+) {
+	request, err := runtime.prompt(engine, policy)
+	request.ControlID = controlID
 	if err == nil {
 		err = runtime.client.Verify(ctx, request)
 	}
 	clear(request.Password)
+	verification := inputShieldVerificationResult{controlID: controlID, generation: generation, err: err}
 	select {
-	case result <- err:
+	case result <- verification:
 	case <-ctx.Done():
 	}
 }
