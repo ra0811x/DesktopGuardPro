@@ -23,13 +23,18 @@ public partial class App
             ? policy.ProcessAndSoftwareEnabled || policy.SystemAndNetworkEnabled || policy.ExternalDevicesEnabled
             : null);
 
-    private FrameworkElement CreateAnalysisSessionBar()
+    private FrameworkElement CreateAnalysisSessionBar(string activePage)
     {
-        var label = new TextBlock { Text = "选择会话后查看结果", TextWrapping = TextWrapping.Wrap };
+        var label = new TextBlock
+        {
+            Text = "选择会话后查看结果", TextWrapping = TextWrapping.Wrap,
+            FontSize = 15, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = ThemeBrush("DgpDashboardTextBrush"),
+        };
         analysisSessionLabels.Add(label);
-        var history = new Button { Content = "选择历史会话" };
+        var history = CreateWorkspaceButton("选择历史会话");
         history.Click += async (_, _) => await NavigateAnalysisAsync("history");
-        var current = new Button { Content = "查看当前 / 最近会话" };
+        var current = CreateWorkspaceButton("当前 / 最近会话");
         current.Click += async (_, _) =>
         {
             try
@@ -44,19 +49,30 @@ public partial class App
             catch { label.Text = "无法读取会话，请检查服务后重试。"; }
         };
         var links = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        links.Children.Add(history);
-        links.Children.Add(current);
         foreach (var (title, tag) in new[] { ("审计", "audit"), ("风险", "risk"), ("资产", "assets"), ("导出", "reports") })
         {
-            var link = new Button { Content = title };
+            var link = CreateWorkspaceButton(title, tag == activePage);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(link,
+                tag == activePage ? "当前页面" : $"查看所选会话的{title}");
             link.Click += async (_, _) => await NavigateAnalysisAsync(tag);
             links.Children.Add(link);
         }
-        return new StackPanel { Spacing = 8, Children = { label, new ScrollViewer
+        var selectors = new StackPanel
         {
-            Content = links, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
-        } } };
+            Orientation = Orientation.Horizontal, Spacing = 8, Children = { history, current },
+        };
+        return CreateWorkspaceNotice(new StackPanel
+        {
+            Spacing = 16,
+            Children =
+            {
+                CreateWorkspaceToolbar(new StackPanel
+                {
+                    Spacing = 6, Children = { CreateWorkspaceNote("查看会话"), label },
+                }, selectors),
+                links,
+            },
+        });
     }
 
     private void SelectAnalysisSession(AnalysisSession session)
@@ -64,7 +80,10 @@ public partial class App
         var changed = analysisWorkspace.Session?.Id != session.Id;
         analysisWorkspace.Select(session);
         foreach (var label in analysisSessionLabels)
-            label.Text = $"正在查看：{session.Name} · {FormatSessionState(session.State)} · {session.Id}";
+        {
+            label.Text = $"{session.Name} · {FormatSessionState(session.State)}";
+            ToolTipService.SetToolTip(label, $"会话标识：{session.Id}");
+        }
         if (!changed) return;
         timelineRequest++; riskRequest++; assetRequest++;
         timelineCursor = ""; timelineHasMore = false;

@@ -2485,41 +2485,41 @@ public partial class App : Application
             {
                 var row = new StackPanel
                 {
-                    Spacing = 4,
-                    Margin = new Thickness(0, 4, 0, 4),
+                    Spacing = 8,
                 };
                 row.Children.Add(new TextBlock
                 {
                     Text = item.Session.Name,
+                    FontSize = 15,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = ThemeBrush("DgpDashboardTextBrush"),
                     FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 });
-                var openSession = new Button { Content = "打开会话" };
+                var openSession = CreateWorkspaceButton("打开会话", true);
                 openSession.Click += async (_, _) =>
                 {
                     SelectAnalysisSession(AnalysisSessionFrom(item.Session));
                     await NavigateAnalysisAsync("audit");
                 };
-                row.Children.Add(openSession);
+                var rowActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
                 row.Children.Add(new TextBlock
                 {
                     Text = $"{FormatSessionState(item.Session.State)} · 创建于 {item.CreatedUtc.LocalDateTime:yyyy-MM-dd HH:mm:ss} · " +
                         (item.RetentionLocked ? "已锁定保留" : "可按保留策略清理"),
                     Foreground = ThemeBrush("DgpSecondaryTextBrush"),
+                    TextWrapping = TextWrapping.Wrap,
                 });
                 if (item.Session.State is "completed" or "failed")
                 {
-                    var retentionButton = new Button
-                    {
-                        Content = item.RetentionLocked ? "解除保留锁" : "锁定保留",
-                        HorizontalAlignment = HorizontalAlignment.Left,
-                    };
+                    var retentionButton = CreateWorkspaceButton(item.RetentionLocked ? "解除保留锁" : "锁定保留");
                     retentionButton.Click += async (_, _) =>
                         await UpdateHistoryRetentionLockAsync(item.Session.Id, !item.RetentionLocked);
-                    row.Children.Add(retentionButton);
+                    rowActions.Children.Add(retentionButton);
                 }
+                rowActions.Children.Add(openSession);
                 historyList.Items.Add(new ListViewItem
                 {
-                    Content = row,
+                    Content = CreateWorkspaceToolbar(row, rowActions),
                 });
             }
             historyCursor = page.NextCursor ?? "";
@@ -2620,6 +2620,8 @@ public partial class App : Application
                                 new TextBlock
                                 {
                                     Text = $"#{eventInfo.Sequence} · {FormatTimelineCategory(eventInfo.Category)} · {FormatTimelineAction(eventInfo.Action)}",
+                                    FontSize = 14,
+                                    TextWrapping = TextWrapping.Wrap,
                                     FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                                 },
                                 new TextBlock
@@ -2627,6 +2629,7 @@ public partial class App : Application
                                     Text = $"{eventInfo.ObservedUtc.LocalDateTime:yyyy-MM-dd HH:mm:ss} · {eventInfo.ObjectKey ?? "未提供对象"}" +
                                         $" · 进程 {eventInfo.ProcessKey ?? "未归因"} · {eventInfo.Source}",
                                     Foreground = ThemeBrush("DgpSecondaryTextBrush"),
+                                    TextWrapping = TextWrapping.Wrap,
                                 },
                             },
                         },
@@ -2713,7 +2716,7 @@ public partial class App : Application
                 var evidenceLinks = new StackPanel { Spacing = 6 };
                 foreach (var evidence in finding.Evidence)
                 {
-                    var link = new Button { Content = $"查看事件 #{evidence.Sequence}" };
+                    var link = CreateWorkspaceButton($"查看事件 #{evidence.Sequence}");
                     link.Click += async (_, _) => await OpenRiskEvidenceAsync(session, evidence);
                     evidenceLinks.Children.Add(link);
                 }
@@ -2724,7 +2727,8 @@ public partial class App : Application
                     (Label: "需处理", Status: "action_needed"),
                 })
                 {
-                    var button = new Button { Content = choice.Label, IsEnabled = finding.Status != choice.Status };
+                    var button = CreateWorkspaceButton(choice.Label);
+                    button.IsEnabled = finding.Status != choice.Status;
                     button.Click += async (_, _) => await UpdateRiskFindingStatusAsync(
                         evaluation.SessionId, finding.Id, choice.Status);
                     actions.Children.Add(button);
@@ -2733,10 +2737,13 @@ public partial class App : Application
 					$"#{evidence.Sequence}  {evidence.ObservedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}\n" +
 					$"事件 {evidence.EventId}\n类别 {FormatTimelineCategory(evidence.Category)}  动作 {FormatTimelineAction(evidence.Action)}\n" +
 					$"对象 {evidence.ObjectKey ?? "（无）"}");
-				var evidenceDetails = new Expander
-				{
-                    Header = $"关联事件（{finding.Evidence.Count}）",
-					Content = new TextBlock
+                var evidenceDetails = CreateDashboardExpander($"关联事件（{finding.Evidence.Count}）",
+                    new StackPanel
+                    {
+                        Spacing = 12,
+                        Children =
+                        {
+                            new TextBlock
 					{
 						Text = $"触发规则：{finding.RuleId}\n" +
 							$"标签：{string.Join("、", finding.Tags ?? Array.Empty<string>())}\n" +
@@ -2745,19 +2752,23 @@ public partial class App : Application
 						TextWrapping = TextWrapping.Wrap,
 						IsTextSelectionEnabled = true,
 						Foreground = ThemeBrush("DgpSecondaryTextBrush"),
-					},
-				};
+                            },
+                            evidenceLinks,
+                        },
+                    });
                 riskList.Items.Add(new ListViewItem
                 {
                     Content = new StackPanel
                     {
-                        Spacing = 4,
+                        Spacing = 12,
                         Margin = new Thickness(0, 4, 0, 4),
                         Children =
                         {
                             new TextBlock
                             {
                                 Text = $"{FormatRiskLevel(finding.Level)}风险 · {finding.Title}",
+                                FontSize = 15,
+                                TextWrapping = TextWrapping.Wrap,
                                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                             },
                             new TextBlock
@@ -2769,10 +2780,10 @@ public partial class App : Application
                             {
                                 Text = $"状态 {FormatRiskStatus(finding.Status)} · 评分 {finding.Score} · 置信度 {finding.Confidence:P0} · 证据 {finding.Evidence.Count} · 规则 {finding.RuleId}",
                                 Foreground = ThemeBrush("DgpSecondaryTextBrush"),
+                                TextWrapping = TextWrapping.Wrap,
                             },
 							evidenceDetails,
                             actions,
-                            evidenceLinks,
                         },
                     },
                 });
@@ -2856,12 +2867,15 @@ public partial class App : Application
                             new TextBlock
                             {
                                 Text = $"{FormatAssetDifferenceKind(difference.Kind)} · {FormatAssetCategory(asset.Category)} · {asset.DisplayName}",
+                                FontSize = 14,
+                                TextWrapping = TextWrapping.Wrap,
                                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                             },
                             new TextBlock
                             {
                                 Text = asset.Identifier,
                                 Foreground = ThemeBrush("DgpSecondaryTextBrush"),
+                                TextWrapping = TextWrapping.Wrap,
                             },
                         },
                     },
@@ -3641,9 +3655,6 @@ public partial class App : Application
         };
         UpdateTemporaryInputUnlockHints();
         var dashboardHeader = CreatePageHeader("仪表盘");
-        dashboardHeader.Background = null;
-        dashboardHeader.BorderThickness = new Thickness(0);
-        dashboardHeader.Padding = new Thickness(0, 4, 0, 8);
 
         sessionStatus.FontSize = 15;
         sessionStatus.Foreground = ThemeBrush("DgpDashboardTextBrush");
@@ -3811,12 +3822,9 @@ public partial class App : Application
         {
             Text = "打开此页面后读取历史会话。",
             Foreground = ThemeBrush("DgpSecondaryTextBrush"),
+            TextWrapping = TextWrapping.Wrap,
         };
-        var refreshHistoryButton = new Button
-        {
-            Content = "刷新列表",
-            HorizontalAlignment = HorizontalAlignment.Left,
-        };
+        var refreshHistoryButton = CreateWorkspaceButton("刷新列表");
         refreshHistoryButton.Click += async (_, _) => await loadHistoryAsync(false);
         loadMoreHistoryButton = new Button
         {
@@ -3827,14 +3835,22 @@ public partial class App : Application
         loadMoreHistoryButton.Click += async (_, _) => await loadHistoryAsync(true);
         var history = new StackPanel
         {
-            Spacing = 12,
-            Margin = new Thickness(16),
+            Spacing = 20,
+            Margin = new Thickness(24),
             Children =
             {
                 CreatePageHeader("历史会话"),
-                CreateAdaptiveColumns(
-                    CreateSectionCard("会话记录", historyList, loadMoreHistoryButton),
-                    CreateSectionCard("查询状态", historyStatus, refreshHistoryButton)),
+                CreateWorkspaceCard("会话记录", Symbol.Calendar,
+                    new StackPanel
+                    {
+                        Spacing = 16,
+                        Children =
+                        {
+                            CreateWorkspaceToolbar(historyStatus, refreshHistoryButton),
+                            historyList,
+                            loadMoreHistoryButton,
+                        },
+                    }),
             },
         };
         timelineList = new ListView
@@ -3846,6 +3862,7 @@ public partial class App : Application
         {
             Text = "打开此页面后读取当前保护会话的事件。",
             Foreground = ThemeBrush("DgpSecondaryTextBrush"),
+            TextWrapping = TextWrapping.Wrap,
         };
         timelineDetail = new TextBlock
         {
@@ -3897,15 +3914,13 @@ public partial class App : Application
 						$"\n原始负载{(payloadTruncated ? "（已截断）" : "")}：\n{rawPayload}");
             }
         };
-        var refreshTimelineButton = new Button
-        {
-            Content = "刷新时间线",
-            HorizontalAlignment = HorizontalAlignment.Left,
-        };
+        var refreshTimelineButton = CreateWorkspaceButton("刷新时间线");
         refreshTimelineButton.Click += async (_, _) => await loadTimelineAsync(false);
-        var exportEventButton = new Button { Content = "导出所选事件" };
+        var exportEventButton = CreateWorkspaceButton("导出所选事件");
         exportEventButton.Click += async (_, _) => await ExportSelectedEventAsync();
-        var resetTimelineFilters = new Button { Content = "重置筛选" };
+        var resetTimelineFilters = CreateWorkspaceButton("重置筛选");
+        var applyTimelineFilters = CreateWorkspaceButton("应用筛选", true);
+        applyTimelineFilters.Click += async (_, _) => await loadTimelineAsync(false);
         resetTimelineFilters.Click += async (_, _) =>
         {
             timelineCategoryFilter.SelectedIndex = 0;
@@ -3924,37 +3939,40 @@ public partial class App : Application
         loadMoreTimelineButton.Click += async (_, _) => await loadTimelineAsync(true);
         var audit = new StackPanel
         {
-            Spacing = 12,
-            Margin = new Thickness(16),
+            Spacing = 20,
+            Margin = new Thickness(24),
             Children =
             {
                 CreatePageHeader("审计结果"),
-                CreateAnalysisSessionBar(),
-                CreateAdaptiveColumns(
-                    CreateSectionCard(
-                        "事件时间线",
-                        timelineStatus,
-                        refreshTimelineButton,
-                        timelineList,
-                        loadMoreTimelineButton),
+                CreateAnalysisSessionBar("audit"),
+                CreateDashboardExpander("筛选事件",
                     new StackPanel
                     {
                         Spacing = 16,
                         Children =
                         {
-                            CreateSectionCard(
-                                "筛选条件",
-                                timelineCategoryFilter,
-                                timelineSeverityFilter,
-                                timelineUserFilter,
-                                timelineProcessFilter,
-                                timelinePathFilter,
-                                timelineFromFilter,
-                                timelineToFilter,
-                                resetTimelineFilters),
-                            CreateSectionCard("事件详情", timelineDetail, exportEventButton),
+                            CreateWorkspaceForm(timelineCategoryFilter, timelineSeverityFilter, timelineUserFilter,
+                                timelineProcessFilter, timelinePathFilter, timelineFromFilter, timelineToFilter),
+                            CreateWorkspaceToolbar(resetTimelineFilters, applyTimelineFilters),
                         },
                     }),
+                CreateBalancedDashboardColumns(
+                    CreateWorkspaceCard("事件时间线", Symbol.Document,
+                        new StackPanel
+                        {
+                            Spacing = 16,
+                            Children =
+                            {
+                                CreateWorkspaceToolbar(timelineStatus, refreshTimelineButton),
+                                timelineList, loadMoreTimelineButton,
+                            },
+                        }),
+                    CreateWorkspaceCard("事件详情", Symbol.View,
+                        new StackPanel
+                        {
+                            Spacing = 16,
+                            Children = { CreateWorkspaceDetail(timelineDetail), exportEventButton },
+                        }), 880, 1.6),
             },
         };
         riskList = new ListView
@@ -3966,33 +3984,28 @@ public partial class App : Application
         {
             Text = "打开此页面后评估当前保护会话。",
             Foreground = ThemeBrush("DgpSecondaryTextBrush"),
+            TextWrapping = TextWrapping.Wrap,
         };
-        var refreshRiskButton = new Button
-        {
-            Content = "重新评估",
-            HorizontalAlignment = HorizontalAlignment.Left,
-        };
+        var refreshRiskButton = CreateWorkspaceButton("重新评估", true);
         refreshRiskButton.Click += async (_, _) => await loadRiskAsync();
         var risk = new StackPanel
         {
-            Spacing = 12,
-            Margin = new Thickness(16),
+            Spacing = 20,
+            Margin = new Thickness(24),
             Children =
             {
                 CreatePageHeader("风险分析"),
-                CreateAnalysisSessionBar(),
-                CreateAdaptiveColumns(
-                    CreateSectionCard("风险发现", riskList),
-                    CreateSectionCard(
-                        "评估状态",
-                        riskStatus,
-                        refreshRiskButton,
-                        new TextBlock
+                CreateAnalysisSessionBar("risk"),
+                CreateWorkspaceCard("风险发现", Symbol.ReportHacked,
+                    new StackPanel
+                    {
+                        Spacing = 16,
+                        Children =
                         {
-                            Text = "选择当前保护会话后，可重新运行规则评估。",
-                            Foreground = ThemeBrush("DgpSecondaryTextBrush"),
-                            TextWrapping = TextWrapping.Wrap,
-                        })),
+                            CreateWorkspaceToolbar(riskStatus, refreshRiskButton),
+                            riskList,
+                        },
+                    }),
             },
         };
         assetList = new ListView
@@ -4004,6 +4017,7 @@ public partial class App : Application
         {
             Text = "打开此页面后读取当前保护会话的资产变化。",
             Foreground = ThemeBrush("DgpSecondaryTextBrush"),
+            TextWrapping = TextWrapping.Wrap,
         };
         assetDetail = new TextBlock
         {
@@ -4063,28 +4077,28 @@ public partial class App : Application
                 CreateAssetCategoryFilter("系统", "system"),
             },
         };
-        var refreshAssetsButton = new Button
-        {
-            Content = "刷新资产变化",
-            HorizontalAlignment = HorizontalAlignment.Left,
-        };
+        var refreshAssetsButton = CreateWorkspaceButton("刷新资产变化");
         refreshAssetsButton.Click += async (_, _) => await loadAssetDifferencesAsync();
         var assets = new StackPanel
         {
-            Spacing = 12,
-            Margin = new Thickness(16),
+            Spacing = 20,
+            Margin = new Thickness(24),
             Children =
             {
                 CreatePageHeader("资产差异"),
-                CreateAnalysisSessionBar(),
-                CreateAdaptiveColumns(
-                    CreateSectionCard(
-                        "资产变化",
-                        assetStatus,
-                        assetFilters,
-                        refreshAssetsButton,
-                        assetList),
-                    CreateSectionCard("资产详情", assetDetail)),
+                CreateAnalysisSessionBar("assets"),
+                CreateBalancedDashboardColumns(
+                    CreateWorkspaceCard("资产变化", Symbol.Library,
+                        new StackPanel
+                        {
+                            Spacing = 16,
+                            Children =
+                            {
+                                CreateWorkspaceToolbar(assetStatus, refreshAssetsButton),
+                                assetFilters, assetList,
+                            },
+                        }),
+                    CreateWorkspaceCard("资产详情", Symbol.View, CreateWorkspaceDetail(assetDetail)), 880, 1.6),
             },
         };
         assets.SizeChanged += (_, args) =>
@@ -4095,6 +4109,7 @@ public partial class App : Application
         };
         reportFormat = new ComboBox
         {
+            Header = "报告格式",
             SelectedIndex = 0,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             MaxWidth = 320,
@@ -4104,6 +4119,7 @@ public partial class App : Application
         reportFormat.Items.Add(new ComboBoxItem { Content = "JSON 报告", Tag = "json" });
         reportObjectDetails = new ComboBox
         {
+            Header = "对象细节",
             SelectedIndex = 1,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             MaxWidth = 320,
@@ -4124,49 +4140,46 @@ public partial class App : Application
             TextWrapping = TextWrapping.Wrap,
             Foreground = ThemeBrush("DgpSecondaryTextBrush"),
         };
-        var exportReportButton = new Button
-        {
-            Content = "生成并保存报告",
-            HorizontalAlignment = HorizontalAlignment.Left,
-        };
+        var exportReportButton = CreateWorkspaceButton("生成并保存报告", true);
         exportReportButton.Click += async (_, _) => await exportReportAsync();
         var reports = new StackPanel
         {
-            Spacing = 12,
-            Margin = new Thickness(16),
+            Spacing = 20,
+            Margin = new Thickness(24),
             Children =
             {
                 CreatePageHeader("报告导出"),
-                CreateAnalysisSessionBar(),
-                CreateAdaptiveColumns(
-                    CreateSectionCard(
-                        "导出设置",
-                        new TextBlock { Text = "报告格式", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
-                        reportFormat,
-                        reportFromSequence,
-                        reportToSequence,
-                        new TextBlock
+                CreateAnalysisSessionBar("reports"),
+                CreateBalancedDashboardColumns(
+                    CreateWorkspaceCard("报告内容", Symbol.Document,
+                        new StackPanel
                         {
-                            Text = "每份最多 100,000 条事件。序号范围包含其中全部事件；资产差异仍是整个会话的前后比较。",
-                            TextWrapping = TextWrapping.Wrap,
-                        },
-                        new TextBlock { Text = "对象细节", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
-                        reportObjectDetails,
-                        reportIncludeProcessKey,
-                        reportIncludePayload,
-                        reportIncludeUsernames,
-                        reportIncludeWindowTitles,
-                        reportSensitiveAcknowledgement),
-                    CreateSectionCard(
-                        "导出说明",
-                        new TextBlock
+                            Spacing = 16,
+                            Children =
+                            {
+                                reportFormat,
+                                CreateWorkspaceForm(reportFromSequence, reportToSequence),
+                                CreateWorkspaceNote("序号留空时导出整个会话，每份最多 100,000 条事件。资产差异始终比较整个会话。"),
+                            },
+                        }),
+                    CreateWorkspaceCard("隐私与细节", Symbol.Permissions,
+                        new StackPanel
                         {
-                            Text = "可分别选择路径、用户名和窗口标题。包含进程关联键或原始事件负载时，报告可能含有敏感信息。",
-                            Foreground = ThemeBrush("DgpSecondaryTextBrush"),
-                            TextWrapping = TextWrapping.Wrap,
-                        },
-                        reportStatus,
-                        exportReportButton)),
+                            Spacing = 16,
+                            Children =
+                            {
+                                reportObjectDetails,
+                                CreateDashboardExpander("更多导出字段",
+                                    new StackPanel
+                                    {
+                                        Spacing = 10,
+                                        Children = { reportIncludeProcessKey, reportIncludePayload,
+                                            reportIncludeUsernames, reportIncludeWindowTitles },
+                                    }),
+                                reportSensitiveAcknowledgement,
+                            },
+                        }), 800),
+                CreateWorkspaceNotice(CreateWorkspaceToolbar(reportStatus, exportReportButton), true),
             },
         };
         fileActivityPolicyEnabled = new ToggleSwitch { Header = "模块总开关", OnContent = "开启", OffContent = "关闭", IsOn = true };
@@ -4222,22 +4235,15 @@ public partial class App : Application
             TextWrapping = TextWrapping.Wrap,
             Foreground = ThemeBrush("DgpSecondaryTextBrush"),
         };
-        var saveMonitoringPolicyButton = new Button
-        {
-            Content = "保存当前模式",
-            HorizontalAlignment = HorizontalAlignment.Left,
-        };
+        var saveMonitoringPolicyButton = CreateWorkspaceButton("保存当前模式", true);
         saveMonitoringPolicyButton.Click += async (_, _) => await SaveMonitoringPolicyAsync();
-        var resetMonitoringPolicyButton = new Button
-        {
-            Content = "恢复当前模式默认值",
-            HorizontalAlignment = HorizontalAlignment.Left,
-        };
+        var resetMonitoringPolicyButton = CreateWorkspaceButton("恢复默认值");
         resetMonitoringPolicyButton.Click += async (_, _) => await ResetMonitoringProfileAsync();
         settingsMonitoringMode = new ComboBox
         {
             Header = "正在配置的模式",
-            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Width = 240,
             SelectedIndex = 3,
         };
         settingsMonitoringMode.Items.Add(new ComboBoxItem { Content = "宽松", Tag = "relaxed" });
@@ -4254,70 +4260,59 @@ public partial class App : Application
 
         Border CreatePolicyCapability(
             string title,
+            Symbol icon,
             ToggleSwitch toggle,
             TextBlock detailSummary,
             string scope,
             Func<Task> showDetails)
         {
-            var detailButton = new Button
-            {
-                Content = "详情",
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
+            var detailButton = CreateWorkspaceButton("配置详情");
             detailButton.Click += async (_, _) => await showDetails();
-            var controls = new Grid { ColumnSpacing = 12 };
-            controls.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            controls.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            controls.Children.Add(toggle);
-            Grid.SetColumn(detailButton, 1);
-            controls.Children.Add(detailButton);
-            return CreateSectionCard(
-                title,
-                controls,
-                detailSummary,
-                new TextBlock
+            var controls = CreateWorkspaceToolbar(toggle, detailButton);
+            return CreateWorkspaceCard(title, icon,
+                new StackPanel
                 {
-                    Text = scope,
-                    TextWrapping = TextWrapping.Wrap,
-                    Foreground = ThemeBrush("DgpSecondaryTextBrush"),
-                });
+                    Spacing = 12,
+                    Children = { detailSummary, controls },
+                }, scope);
         }
 
         var capabilityCards = new StackPanel
         {
-            Spacing = 12,
+            Spacing = 16,
             Children =
             {
+                CreateBalancedDashboardColumns(
                 CreatePolicyCapability(
-                    "文件审计",
+                    "文件审计", Symbol.Document,
                     fileActivityPolicyEnabled,
                     filePolicyDetailSummary,
-                    "配置创建、修改、删除、重命名、哈希、严格读取审计和文件活动风险规则。",
+                    "文件变化、内容哈希与读取审计",
                     ShowFilePolicyDetailsAsync),
                 CreatePolicyCapability(
-                    "进程与软件",
+                    "进程与软件", Symbol.AllApps,
                     processAndSoftwarePolicyEnabled,
                     processPolicyDetailSummary,
-                    "配置相关进程与软件清单快照间隔，以及异常进程和软件变化风险规则。",
-                    ShowProcessPolicyDetailsAsync),
+                    "进程活动、软件清单与变化规则",
+                    ShowProcessPolicyDetailsAsync), 800),
+                CreateBalancedDashboardColumns(
                 CreatePolicyCapability(
-                    "系统与网络",
+                    "系统与网络", Symbol.Setting,
                     systemAndNetworkPolicyEnabled,
                     systemPolicyDetailSummary,
-                    "配置账户、网络、代理、防火墙、远程桌面、审计策略、安全日志、时间、服务、驱动、计划任务和启动项。",
+                    "系统配置、网络状态与安全日志",
                     ShowSystemPolicyDetailsAsync),
                 CreatePolicyCapability(
-                    "外接设备",
+                    "外接设备", Symbol.Link,
                     externalDevicesPolicyEnabled,
                     devicePolicyDetailSummary,
-                    "配置设备接入、移除、扫描间隔和设备接入风险规则。",
-                    ShowDevicePolicyDetailsAsync),
+                    "设备接入、移除与扫描频率",
+                    ShowDevicePolicyDetailsAsync), 800),
                 CreatePolicyCapability(
-                    "用户会话活动",
+                    "用户会话活动", Symbol.Contact,
                     userSessionActivityPolicyEnabled,
                     userSessionPolicyDetailSummary,
-                    "配置前台应用、窗口标题、键盘和鼠标计数、高风险组合键、采样与汇总间隔。",
+                    "前台应用、输入计数与活动汇总",
                     ShowUserSessionPolicyDetailsAsync),
             },
         };
@@ -4325,45 +4320,45 @@ public partial class App : Application
 
         var monitoringPolicy = new StackPanel
         {
-            Spacing = 12,
-            Margin = new Thickness(16),
+            Spacing = 20,
+            Margin = new Thickness(24),
             Children =
             {
                 CreatePageHeader("系统设置"),
-                CreateSectionCard(
-                    "模式配置",
-                    new TextBlock
-                    {
-                        Text = "修改仅影响以后选择该模式创建的新会话。切换页面或模式会保留本次打开期间的草稿；关闭软件前请保存。",
-                        TextWrapping = TextWrapping.Wrap,
-                        Foreground = ThemeBrush("DgpSecondaryTextBrush"),
-                    },
-                    settingsMonitoringMode,
+                CreateWorkspaceCard("模式配置", Symbol.Setting,
                     new StackPanel
                     {
-                        Orientation = Orientation.Horizontal,
-                        Spacing = 8,
-                        Children = { saveMonitoringPolicyButton, resetMonitoringPolicyButton },
+                        Spacing = 16,
+                        Children =
+                        {
+                            CreateWorkspaceToolbar(settingsMonitoringMode,
+                                new StackPanel
+                                {
+                                    Orientation = Orientation.Horizontal, Spacing = 8,
+                                    Children = { resetMonitoringPolicyButton, saveMonitoringPolicyButton },
+                                }),
+                            CreateWorkspaceNote("修改用于该模式的新会话；切换模式保留草稿，关闭软件前请保存。"),
+                            CreateWorkspaceNotice(monitoringPolicyStatus),
+                        },
                     }),
-                CreateAdaptiveColumns(
-                    capabilityCards,
+                capabilityCards,
+                CreateDashboardExpander("模式摘要与运行说明",
                     new StackPanel
                     {
                         Spacing = 12,
                         Children =
                         {
-                            CreateSectionCard(
-                                "当前模式摘要",
-                                monitoringPolicySummary,
-                                new TextBlock { Text = "配置方式", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
-                                new TextBlock { Text = "模块总开关控制采集器是否随该模式启动。“详情”控制事件类型、采集对象、轮询频率、风险规则和高级行为。", TextWrapping = TextWrapping.Wrap, Foreground = ThemeBrush("DgpSecondaryTextBrush") },
-                                new TextBlock { Text = "并行规则", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
-                                new TextBlock { Text = "各审计模块可按需要组合运行。临时键鼠控制在仪表盘独立启动和停止；运行期间会暂停键盘、鼠标及高风险快捷键计数，前台应用与窗口标题采集可继续。", TextWrapping = TextWrapping.Wrap, Foreground = ThemeBrush("DgpSecondaryTextBrush") },
-                                monitoringPolicyStatus),
+                            monitoringPolicySummary,
+                            CreateWorkspaceNote("各模块可组合运行。配置详情中可调整事件类型、对象、采样间隔与风险规则。"),
+                            CreateWorkspaceNote("临时键鼠控制在仪表盘独立运行，期间暂停输入计数；前台应用与窗口标题可继续采集。"),
                         },
                     }),
             },
         };
+        foreach (var page in new[] { history, audit, risk, assets, reports, monitoringPolicy })
+            ApplyWorkspaceTypography(page);
+        foreach (var list in new[] { historyList, timelineList, riskList, assetList })
+            StyleWorkspaceList(list);
         var overviewPage = CreatePageSurface(overview);
         var historyPage = CreatePageSurface(history);
         var auditPage = CreatePageSurface(audit);
@@ -4593,11 +4588,7 @@ public partial class App : Application
     {
         return new Border
         {
-            Background = ThemeBrush("DgpSurfaceBrush"),
-            BorderBrush = ThemeBrush("DgpBorderBrush"),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(16, 12, 16, 12),
+            Padding = new Thickness(0, 4, 0, 8),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Child = new TextBlock
             {
@@ -4607,6 +4598,191 @@ public partial class App : Application
                 Foreground = ThemeBrush("DgpPrimaryTextBrush"),
             },
         };
+    }
+
+    private Button CreateWorkspaceButton(string label, bool primary = false)
+    {
+        return new Button
+        {
+            Content = label,
+            FontSize = 13,
+            MinHeight = 40,
+            Padding = new Thickness(16, 8, 16, 8),
+            CornerRadius = new CornerRadius(8),
+            Background = ThemeBrush(primary ? "DgpBrandBrush" : "DgpInformationBrush"),
+            Foreground = ThemeBrush(primary ? "DgpTitleBarTextBrush" : "DgpBrandBrush"),
+            BorderThickness = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+    }
+
+    private TextBlock CreateWorkspaceNote(string text) => new()
+    {
+        Text = text, FontSize = 13,
+        Foreground = ThemeBrush("DgpDashboardMutedBrush"),
+        TextWrapping = TextWrapping.Wrap,
+    };
+
+    private Border CreateWorkspaceNotice(FrameworkElement content, bool success = false) => new()
+    {
+        Background = ThemeBrush(success ? "DgpTealSurfaceBrush" : "DgpInformationBrush"),
+        BorderBrush = ThemeBrush("DgpDashboardLineBrush"),
+        BorderThickness = new Thickness(1),
+        CornerRadius = new CornerRadius(12),
+        Padding = new Thickness(16),
+        Child = content,
+    };
+
+    private Border CreateWorkspaceCard(string title, Symbol icon, FrameworkElement body, string? description = null)
+    {
+        var heading = new StackPanel
+        {
+            Orientation = Orientation.Horizontal, Spacing = 12,
+            Children =
+            {
+                new Border
+                {
+                    Width = 36, Height = 36, CornerRadius = new CornerRadius(10),
+                    Background = ThemeBrush("DgpInformationBrush"),
+                    Child = new SymbolIcon(icon) { Foreground = ThemeBrush("DgpBrandBrush") },
+                },
+                new TextBlock
+                {
+                    Text = title, FontSize = 18,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    Foreground = ThemeBrush("DgpDashboardTextBrush"),
+                    VerticalAlignment = VerticalAlignment.Center,
+                },
+            },
+        };
+        var content = new StackPanel { Spacing = 16 };
+        content.Children.Add(heading);
+        if (description is not null) content.Children.Add(CreateWorkspaceNote(description));
+        content.Children.Add(body);
+        return new Border
+        {
+            Background = ThemeBrush("DgpSurfaceBrush"),
+            BorderBrush = ThemeBrush("DgpDashboardLineBrush"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(18),
+            Padding = new Thickness(20),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Child = content,
+        };
+    }
+
+    private Grid CreateWorkspaceToolbar(FrameworkElement content, FrameworkElement actions)
+    {
+        var grid = new Grid { ColumnSpacing = 16, RowSpacing = 12 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(0) });
+        content.VerticalAlignment = VerticalAlignment.Center;
+        actions.VerticalAlignment = VerticalAlignment.Center;
+        grid.Children.Add(content);
+        grid.Children.Add(actions);
+        void Arrange(double width)
+        {
+            var wide = width >= 520;
+            grid.ColumnDefinitions[1].Width = wide ? GridLength.Auto : new GridLength(0);
+            grid.RowDefinitions[1].Height = wide ? new GridLength(0) : GridLength.Auto;
+            Grid.SetColumn(actions, wide ? 1 : 0);
+            Grid.SetRow(actions, wide ? 0 : 1);
+            actions.HorizontalAlignment = wide ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+        }
+        Arrange(800);
+        grid.SizeChanged += (_, args) => Arrange(args.NewSize.Width);
+        return grid;
+    }
+
+    private Grid CreateWorkspaceForm(params FrameworkElement[] fields)
+    {
+        var grid = new Grid { ColumnSpacing = 16, RowSpacing = 16 };
+        foreach (var field in fields) grid.Children.Add(field);
+        var previousColumns = 0;
+        void Arrange(double width)
+        {
+            var columns = Math.Clamp((int)(width / 240), 1, Math.Min(3, fields.Length));
+            if (columns == previousColumns) return;
+            previousColumns = columns;
+            grid.ColumnDefinitions.Clear();
+            grid.RowDefinitions.Clear();
+            for (var i = 0; i < columns; i++)
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            for (var i = 0; i < (fields.Length + columns - 1) / columns; i++)
+                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            for (var i = 0; i < fields.Length; i++)
+            {
+                Grid.SetColumn(fields[i], i % columns);
+                Grid.SetRow(fields[i], i / columns);
+            }
+        }
+        Arrange(720);
+        grid.SizeChanged += (_, args) => Arrange(args.NewSize.Width);
+        return grid;
+    }
+
+    private ScrollViewer CreateWorkspaceDetail(TextBlock text)
+    {
+        text.IsTextSelectionEnabled = true;
+        text.FontSize = 13;
+        return new ScrollViewer
+        {
+            Content = text, MaxHeight = 480,
+            HorizontalScrollMode = ScrollMode.Disabled,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+        };
+    }
+
+    private void ApplyWorkspaceTypography(FrameworkElement element)
+    {
+        if (element is TextBlock text)
+        {
+            text.TextWrapping = TextWrapping.Wrap;
+            if (text.ReadLocalValue(TextBlock.FontSizeProperty) == DependencyProperty.UnsetValue) text.FontSize = 13;
+        }
+        if (element is Control control && element is not ListView)
+        {
+            control.FontSize = 13;
+            control.Foreground = control is Button ? control.Foreground : ThemeBrush("DgpDashboardTextBrush");
+            if (control is TextBox or ComboBox or Button)
+            {
+                control.MinHeight = 40;
+                control.CornerRadius = new CornerRadius(8);
+                control.Padding = new Thickness(12, 8, 12, 8);
+            }
+        }
+        switch (element)
+        {
+            case Panel panel:
+                foreach (var child in panel.Children.OfType<FrameworkElement>()) ApplyWorkspaceTypography(child);
+                break;
+            case Border { Child: FrameworkElement child }: ApplyWorkspaceTypography(child); break;
+            case ContentControl { Content: FrameworkElement child }: ApplyWorkspaceTypography(child); break;
+        }
+    }
+
+    private void StyleWorkspaceList(ListView list)
+    {
+        list.MinHeight = 240;
+        list.MaxHeight = 520;
+        list.FontSize = 13;
+        list.Foreground = ThemeBrush("DgpDashboardTextBrush");
+        list.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+        var style = new Style(typeof(ListViewItem));
+        style.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
+        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(12)));
+        style.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(0, 0, 0, 8)));
+        style.Setters.Add(new Setter(Control.CornerRadiusProperty, new CornerRadius(10)));
+        list.ItemContainerStyle = style;
+        list.Resources["ListViewItemBackground"] = ThemeBrush("DgpCanvasBrush");
+        list.Resources["ListViewItemBackgroundSelected"] = ThemeBrush("DgpInformationBrush");
+        list.Resources["ListViewItemBackgroundPointerOver"] = ThemeBrush("DgpInformationBrush");
     }
 
     private Border CreateDashboardTask(

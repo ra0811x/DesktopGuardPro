@@ -158,7 +158,8 @@ if ($appCode -match 'reportFormat\s*=\s*new ComboBox\s*\{[^}]*Width\s*=\s*220' -
 }
 foreach ($densityRequirement in @(
     'private Border CreateSectionCard(',
-    'private Grid CreateAdaptiveColumns(',
+    'private Grid CreateWorkspaceToolbar(',
+    'private Grid CreateWorkspaceForm(',
     'args.NewSize.Width >= breakpoint')) {
     if (-not $appCode.Contains($densityRequirement)) {
         throw "Native UI content-density requirement is missing: $densityRequirement"
@@ -167,12 +168,11 @@ foreach ($densityRequirement in @(
 if ($appCode -notmatch 'Grid\.SetRow\(secondary,\s*useColumns\s*\?\s*0\s*:\s*1\)') {
     throw 'Adaptive columns must move secondary content below the primary content in narrow windows.'
 }
-if (@([regex]::Matches($appCode, 'CreateSectionCard\(')).Count -lt 11) {
-    throw 'Native UI must group existing content into section cards.'
+if (@([regex]::Matches($appCode, 'CreateWorkspaceCard\(')).Count -lt 10) {
+    throw 'Analysis and settings pages must use the shared dashboard-style card.'
 }
-if (@([regex]::Matches($appCode, 'CreateAdaptiveColumns\(')).Count -lt 7 -or
-    @([regex]::Matches($appCode, 'CreateBalancedDashboardColumns\(')).Count -lt 4) {
-    throw 'Each navigation page must provide a wide and narrow layout, with balanced rows on the dashboard.'
+if (@([regex]::Matches($appCode, 'CreateBalancedDashboardColumns\(')).Count -lt 9) {
+    throw 'Dashboard, analysis and settings pages must provide balanced responsive rows.'
 }
 $sectionCard = [regex]::Match(
     $appCode,
@@ -196,6 +196,20 @@ if ($sectionCard -match 'VerticalAlignment\s*=\s*VerticalAlignment\.Stretch') {
 if (-not $appCode.Contains('private Border CreatePageHeader(string title)') -or
     @([regex]::Matches($appCode, 'CreatePageHeader\("')).Count -ne 7) {
     throw 'Each navigation page must use the compact, single-title page header.'
+}
+$workspaceCard = [regex]::Match($appCode,
+    'private Border CreateWorkspaceCard\([\s\S]+?^    \}',
+    [Text.RegularExpressions.RegexOptions]::Multiline).Value
+foreach ($requirement in @('DgpSurfaceBrush', 'DgpDashboardLineBrush', 'new CornerRadius(18)', 'new Thickness(20)')) {
+    if (-not $workspaceCard.Contains($requirement)) {
+        throw "Workspace cards must match the dashboard surface and spacing: $requirement"
+    }
+}
+$pageHeader = [regex]::Match($appCode,
+    'private Border CreatePageHeader\([\s\S]+?^    \}',
+    [Text.RegularExpressions.RegexOptions]::Multiline).Value
+if ($pageHeader.Contains('BorderThickness') -or $pageHeader.Contains('Background =')) {
+    throw 'Page headers must use the same unboxed title as the dashboard.'
 }
 foreach ($menuTitle in @('文件', '编辑', '查看', '设置')) {
     if (-not $appCode.Contains('CreateTopMenu("' + $menuTitle + '")')) {
@@ -303,7 +317,7 @@ foreach ($monitoringPolicyRequirement in @(
     'private MonitoringPolicyInfo currentMonitoringPolicy = MonitoringPolicyInfo.CreateDefault();',
     'private void UpdateMonitoringPolicySummary()',
     'CreatePolicyCapability(',
-    'Content = "详情"',
+    'CreateWorkspaceButton("配置详情")',
     'ShowFilePolicyDetailsAsync',
     'ShowProcessPolicyDetailsAsync',
     'ShowSystemPolicyDetailsAsync',
@@ -327,9 +341,9 @@ foreach ($monitoringPolicyRequirement in @(
     '设置本地密码',
     '启用采集缺口风险规则',
     '已启用 {enabledCount}/5 项审计能力',
-    '配置方式',
-    '修改仅影响以后选择该模式创建的新会话',
-    '临时键鼠控制在仪表盘独立启动和停止')) {
+    '配置详情中可调整事件类型',
+    '修改用于该模式的新会话',
+    '临时键鼠控制在仪表盘独立运行')) {
     if (-not $appCode.Contains($monitoringPolicyRequirement)) {
         throw "Native UI detailed monitoring-policy requirement is missing: $monitoringPolicyRequirement"
     }
@@ -357,7 +371,7 @@ if ($icons.Count -ne 7 -or @($icons | Select-Object -Unique).Count -ne 7) {
 }
 
 $analysisCode = Get-Content (Join-Path $projectRoot 'native\DesktopGuardPro.Native\App.Analysis.cs') -Raw
-foreach ($requirement in @('Content = "打开会话"', 'CreateAnalysisSessionBar()', 'ResolveAnalysisSessionAsync(client)', 'OpenRiskEvidenceAsync', 'ReportSequenceRange.TryParse')) {
+foreach ($requirement in @('CreateWorkspaceButton("打开会话", true)', 'CreateAnalysisSessionBar(', 'ResolveAnalysisSessionAsync(client)', 'OpenRiskEvidenceAsync', 'ReportSequenceRange.TryParse')) {
     if (-not $appCode.Contains($requirement)) { throw "Cross-page session wiring missing: $requirement" }
 }
 foreach ($method in @('LoadTimelineAsync', 'LoadRiskAsync', 'LoadAssetDifferencesAsync', 'ExportReportAsync')) {
