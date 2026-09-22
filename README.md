@@ -11,8 +11,8 @@ Desktop Guard Pro 是面向 Windows x64 的本机保护与审计应用。它通�
 
 当前发布版本为 `2.11.35`，安装包位于项目的 `dist/releases` 目录。该版本修复
 临时输入控制的并发启动、旧任务验证影响新任务、停止确认重试、设备清单串扰、
-规则保存反馈和解锁提示，并校正原生界面的发布版本信息。历史安装包保留在
-`dist/releases`，归档文件位于 `dist/releases/archive`。
+规则保存反馈和解锁提示，并校正原生界面的发布版本信息。本地发布目录只保留
+`2.11.35` 安装包、构建回执和源码包；历史版本从 GitHub Releases 获取。
 
 - 安装包：
   [`DesktopGuardPro-2.11.35-windows-amd64.msi`](dist/releases/DesktopGuardPro-2.11.35-windows-amd64.msi)
