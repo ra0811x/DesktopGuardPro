@@ -940,3 +940,93 @@ func TestApplicationRuntimeRequiresInstallPolicy(t *testing.T) {
 		t.Fatalf("openApplicationRuntime() error = %v, want %v", err, installpolicy.ErrPolicyInvalid)
 	}
 }
+
+func TestHistoricalSessionAnalysisAfterRestartWithAnotherCurrentSession(t *testing.T) {
+	ctx := context.Background()
+	dataDirectory := t.TempDir()
+	runtime, err := openTestApplicationRuntime(ctx, dataDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if runtime != nil {
+			_ = runtime.Close()
+		}
+	}()
+	archived, err := domain.NewSession("history-a", "Archived session A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.repository.CreateSession(ctx, *archived, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []domain.SessionState{domain.SessionStatePreparing, domain.SessionStateActive, domain.SessionStateFinalizing, domain.SessionStateCompleted} {
+		if err := archived.Transition(state); err != nil {
+			t.Fatal(err)
+		}
+		if err := runtime.repository.UpdateSession(ctx, *archived, time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	event := domain.AuditEvent{
+		EventID: "history-a-evidence", SessionID: archived.ID, Category: domain.EventCategoryDevice,
+		Action: "device_connected", Severity: domain.EventSeverityMedium, ObservedUTC: time.Now().UTC(),
+		ObjectKey: "archived-device-a", Source: "test", Confidence: domain.EventConfidenceDirect,
+	}
+	if _, err := runtime.repository.AppendEventAutoSequence(ctx, event, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Close(); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err = openTestApplicationRuntime(ctx, dataDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := runtime.coordinator.Current(); ok {
+		t.Fatal("terminal session became current after restart")
+	}
+	callRuntimeAPI(t, runtime, contracts.MessageTypeSessionCreate, coreservice.CreateSessionRequest{ID: "current-b", Name: "Current session B"})
+	var history storage.SessionListPage
+	if err := callRuntimeAPI(t, runtime, contracts.MessageTypeSessionList, coreservice.SessionListRequest{}).DecodePayload(&history); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range history.Items {
+		if item.Session.ID == archived.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("archive missing from history")
+	}
+	var timeline storage.TimelinePage
+	if err := callRuntimeAPI(t, runtime, contracts.MessageTypeTimelineQuery, coreservice.TimelineQueryRequest{SessionID: archived.ID, Limit: 100}).DecodePayload(&timeline); err != nil {
+		t.Fatal(err)
+	}
+	if len(timeline.Records) != 1 || timeline.Records[0].Event.EventID != event.EventID {
+		t.Fatal("timeline queried wrong session")
+	}
+	for _, query := range []struct {
+		kind    contracts.MessageType
+		payload any
+	}{
+		{contracts.MessageTypeRiskEvaluate, coreservice.RiskEvaluateRequest{SessionID: archived.ID}},
+		{contracts.MessageTypeAssetDifferenceQuery, coreservice.AssetDifferenceQueryRequest{SessionID: archived.ID}},
+	} {
+		response := callRuntimeAPI(t, runtime, query.kind, query.payload)
+		var result struct {
+			SessionID string `json:"sessionId"`
+		}
+		if err := response.DecodePayload(&result); err != nil || result.SessionID != archived.ID {
+			t.Fatalf("wrong analysis session: %s %v", response.Payload, err)
+		}
+	}
+	var report coreservice.ReportResult
+	if err := callRuntimeAPI(t, runtime, contracts.MessageTypeReportExport, coreservice.ReportExportRequest{SessionID: archived.ID, Format: coreservice.ReportFormatJSON, FromSequence: 1, ToSequence: 1}).DecodePayload(&report); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(report.Content, "history-a-evidence") || strings.Contains(report.Content, "current-b") {
+		t.Fatal("report mixed historical and current sessions")
+	}
+}

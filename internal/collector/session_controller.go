@@ -43,9 +43,10 @@ type SessionController struct {
 	captureStart BaselineCapture
 	captureEnd   BaselineCapture
 
-	healthMutex       sync.RWMutex
-	activePipeline    *sessionPipeline
-	controllerFailure error
+	healthMutex        sync.RWMutex
+	activePipeline     *sessionPipeline
+	controllerFailure  error
+	endBaselineSession string
 }
 
 func NewSessionController(
@@ -185,6 +186,7 @@ func (controller *SessionController) waitForPipeline(ctx context.Context, sessio
 		controller.healthMutex.RLock()
 		pipeline := controller.activePipeline
 		failure := controller.controllerFailure
+		endBaselineSession := controller.endBaselineSession
 		controller.healthMutex.RUnlock()
 		if failure != nil {
 			return fmt.Errorf("collector controller failed: %w", failure)
@@ -197,7 +199,12 @@ func (controller *SessionController) waitForPipeline(ctx context.Context, sessio
 		}
 		if pipeline == nil || pipeline.sessionID != sessionID {
 			if !active {
-				return nil
+				session, exists := controller.source.Current()
+				if controller.captureEnd == nil || !exists || session.ID != sessionID ||
+					(session.State != domain.SessionStateFinalizing && session.State != domain.SessionStateCompleted) ||
+					endBaselineSession == sessionID {
+					return nil
+				}
 			}
 		} else if active && pipeline.running() {
 			return nil
@@ -232,13 +239,18 @@ func (controller *SessionController) reconcile(ctx context.Context, current *ses
 			if err := current.stop(); err != nil {
 				return nil, err
 			}
-			if exists && current.sessionID == session.ID &&
-				(session.State == domain.SessionStateFinalizing ||
-					session.State == domain.SessionStateCompleted) && controller.captureEnd != nil {
-				if err := controller.captureEnd(ctx, session.ID); err != nil {
-					return nil, fmt.Errorf("capture end baseline for session %s: %w", session.ID, err)
-				}
+		}
+		controller.healthMutex.RLock()
+		captured := controller.endBaselineSession == session.ID
+		controller.healthMutex.RUnlock()
+		if exists && !captured && (session.State == domain.SessionStateFinalizing ||
+			session.State == domain.SessionStateCompleted) && controller.captureEnd != nil {
+			if err := controller.captureEnd(ctx, session.ID); err != nil {
+				return nil, fmt.Errorf("capture end baseline for session %s: %w", session.ID, err)
 			}
+			controller.healthMutex.Lock()
+			controller.endBaselineSession = session.ID
+			controller.healthMutex.Unlock()
 		}
 		return nil, nil
 	}

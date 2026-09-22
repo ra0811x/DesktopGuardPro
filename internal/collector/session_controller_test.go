@@ -471,3 +471,73 @@ func waitChannel(t *testing.T, channel <-chan struct{}) {
 		t.Fatal("timed out waiting for lifecycle signal")
 	}
 }
+func TestAuditEndBaselineAfterPause(t *testing.T) {
+	for _, pause := range []bool{false, true} {
+		name := "direct_end"
+		if pause {
+			name = "pause_then_end"
+		}
+		t.Run(name, func(t *testing.T) {
+			source := &fakeSessionSource{session: domain.Session{ID: "audit-probe", State: domain.SessionStateActive}, exists: true}
+			endCount := 0
+			started := make(chan struct{})
+			controller, err := NewSessionController(source, &fakeEventStore{}, func() ([]Collector, error) {
+				return []Collector{&lifecycleCollector{started: started}}, nil
+			}, SessionControllerOptions{CaptureEndBaseline: func(context.Context, string) error { endCount++; return nil }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			pipeline, err := controller.reconcile(ctx, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pipeline.stop()
+			waitChannel(t, started)
+			if pause {
+				source.set(domain.Session{ID: "audit-probe", State: domain.SessionStatePaused}, true)
+				pipeline, err = controller.reconcile(ctx, pipeline)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			source.set(domain.Session{ID: "audit-probe", State: domain.SessionStateFinalizing}, true)
+			_, err = controller.reconcile(ctx, pipeline)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if endCount != 1 {
+				t.Fatalf("end baseline captures = %d, want 1", endCount)
+			}
+		})
+	}
+}
+
+func TestSessionControllerWaitForStoppedWaitsForEndBaselineWithoutPipeline(t *testing.T) {
+	source := &fakeSessionSource{session: domain.Session{ID: "paused-end", State: domain.SessionStateFinalizing}, exists: true}
+	captures := 0
+	controller, err := NewSessionController(source, &fakeEventStore{}, func() ([]Collector, error) { return nil, nil }, SessionControllerOptions{
+		PollInterval:       time.Millisecond,
+		CaptureEndBaseline: func(context.Context, string) error { captures++; return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	timeout, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := controller.WaitForStopped(timeout, "paused-end"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("returned before end baseline: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := controller.reconcile(context.Background(), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if captures != 1 {
+		t.Fatalf("end baseline captured %d times, want exactly once", captures)
+	}
+	if err := controller.WaitForStopped(context.Background(), "paused-end"); err != nil {
+		t.Fatal(err)
+	}
+}

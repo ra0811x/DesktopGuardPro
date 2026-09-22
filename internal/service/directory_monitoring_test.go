@@ -475,3 +475,31 @@ func (store *directoryMonitoringTestStore) AppendEventAutoSequence(_ context.Con
 	store.events = append(store.events, event)
 	return event, nil
 }
+
+func TestScopeChangesRejectedUntilProtectionEnds(t *testing.T) {
+	for _, state := range []domain.SessionState{domain.SessionStatePreparing, domain.SessionStateActive, domain.SessionStateDegraded, domain.SessionStatePaused, domain.SessionStateFinalizing} {
+		t.Run(string(state), func(t *testing.T) {
+			store := &directoryMonitoringTestStore{}
+			coordinator := NewCoordinator()
+			coordinator.current = &domain.Session{ID: "scope-test", State: state}
+			api := NewPersistentAuthorizedAPI(coordinator, store, "owner")
+			api.SetDirectoryMonitoringValidator(func(roots []string) ([]string, error) { return roots, nil })
+			for _, payload := range []any{
+				map[string]any{"directories": []string{`C:\Evidence`}},
+				map[string]any{"targets": []domain.MonitoringTarget{}},
+				map[string]any{"exclusions": []domain.MonitoringExclusion{}},
+				map[string]any{"exclusions": []map[string]string{{"kind": "path", "pattern": `C:\Evidence`}}},
+			} {
+				request := newTestMessage(t, contracts.MessageTypeDirectoryMonitoringUpdate, time.Now().UTC(), payload)
+				response, err := api.HandleForClient(request, ClientIdentity{UserSID: "owner"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				assertAPIError(t, response, ErrorCodeInvalidRequest)
+				if len(store.directories) != 0 || len(store.targets) != 0 || len(store.exclusions) != 0 || len(store.events) != 0 {
+					t.Fatal("rejected scope mutated storage")
+				}
+			}
+		})
+	}
+}

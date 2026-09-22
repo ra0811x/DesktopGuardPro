@@ -4,22 +4,22 @@ Desktop Guard Pro 是面向 Windows x64 的本机保护与审计应用。它通�
 用户会话代理、原生桌面界面和维护程序，记录保护期间的文件、进程、软件、设备、
 账户和系统配置变化，并提供风险分析、完整性校验和报告导出。
 
-本文按 2026 年 9 月 22 日的工作区源码和 `2.11.35` 发布物核对。当前安装包使用
+本文按 2026 年 9 月 22 日的工作区源码和 `2.11.36` 发布物核对。当前安装包使用
 测试代码签名证书，适合开发、测试和验收环境。
 
 ## 当前版本
 
-当前发布版本为 `2.11.35`，安装包位于项目的 `dist/releases` 目录。该版本修复
-临时输入控制的并发启动、旧任务验证影响新任务、停止确认重试、设备清单串扰、
-规则保存反馈和解锁提示，并校正原生界面的发布版本信息。本地发布目录只保留
-`2.11.35` 安装包、构建回执和源码包；历史版本从 GitHub Releases 获取。
+当前发布版本为 `2.11.36`，安装包位于项目的 `dist/releases` 目录。该版本将历史
+会话贯通审计、风险、资产差异和报告导出，修复暂停后结束保护遗漏资产结束快照，
+并补齐范围变更、分页、分段导出和设置草稿处理。本地发布目录只保留当前安装包、
+构建回执和源码包；历史版本从 GitHub Releases 获取。
 
 - 安装包：
-  [`DesktopGuardPro-2.11.35-windows-amd64.msi`](dist/releases/DesktopGuardPro-2.11.35-windows-amd64.msi)
+  [`DesktopGuardPro-2.11.36-windows-amd64.msi`](dist/releases/DesktopGuardPro-2.11.36-windows-amd64.msi)
 - 构建回执：
-  [`DesktopGuardPro-2.11.35-windows-amd64.msi.build.json`](dist/releases/DesktopGuardPro-2.11.35-windows-amd64.msi.build.json)
+  [`DesktopGuardPro-2.11.36-windows-amd64.msi.build.json`](dist/releases/DesktopGuardPro-2.11.36-windows-amd64.msi.build.json)
 - SHA-256：
-  `BDB2A8E6155221B4C19756FEA4E6EE9E469A98833FF39B5C66F2BE7A56180CF5`
+  `96BF2F14A4967BCA1D39364720A4EB0504CC61EB782AB620E3A082F2CD3A1387`
 - 签名者：`CN=Desktop Guard Pro Test Signing`
 - 证书指纹：`E20E6C2B305777D52341C14E2DC67E0A2E1522FD`
 
@@ -29,7 +29,7 @@ Desktop Guard Pro 是面向 Windows x64 的本机保护与审计应用。它通�
 ## 产品能力
 
 工作区验收矩阵记录了早期 FR-001 至 FR-097 共 72 条功能需求。该矩阵尚未覆盖
-`2.11.35` 的全部模式配置与临时输入控制场景。涉及 Windows 版本、管理员权限、
+`2.11.36` 的全部模式配置与临时输入控制场景。涉及 Windows 版本、管理员权限、
 硬件和异常恢复的场景仍需在目标设备验证。详细条件见
 [`docs/requirements-acceptance-matrix.md`](docs/requirements-acceptance-matrix.md)。
 
@@ -194,7 +194,7 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 1. 结束正在进行的保护会话。
 2. 关闭 Desktop Guard Pro 主窗口。
 3. 打开
-   [`DesktopGuardPro-2.11.35-windows-amd64.msi`](dist/releases/DesktopGuardPro-2.11.35-windows-amd64.msi)。
+   [`DesktopGuardPro-2.11.36-windows-amd64.msi`](dist/releases/DesktopGuardPro-2.11.36-windows-amd64.msi)。
 4. 确认管理员权限和测试发布者提示。
 5. 选择安装目录和桌面快捷方式选项。
 6. 等待服务安装、启动和健康检查完成。
@@ -228,7 +228,7 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 当前发布流程从
 `native/DesktopGuardPro.Native/DesktopGuardPro.Native.csproj` 生成桌面界面。
 `frontend/` 和 `cmd/desktop-guard-ui/` 保留用于兼容与自动化验证，不会作为
-`2.11.35` MSI 的主界面载入。
+`2.11.36` MSI 的主界面载入。
 
 ## 开发环境
 
@@ -255,7 +255,7 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 
 ```powershell
 go run ./cmd/desktop-guard-release `
-  --version 2.11.35 `
+  --version 2.11.36 `
   --output dist\staging
 ```
 
@@ -272,7 +272,7 @@ dotnet build `
 
 ```powershell
 $msiArguments = @{
-  Version = '2.11.35'
+  Version = '2.11.36'
   OutputDirectory = 'dist\releases'
   CertificateStore = 'LocalMachine'
   CertificateThumbprint = '<certificate-thumbprint>'
@@ -304,8 +304,8 @@ go vet ./...
 
 $nativeUiTest = @{
   ExecutablePath = `
-    'dist\staging\DesktopGuardPro-2.11.35-windows-amd64\desktop-guard-ui.exe'
-  ExpectedVersion = '2.11.35'
+    'dist\staging\DesktopGuardPro-2.11.36-windows-amd64\desktop-guard-ui.exe'
+  ExpectedVersion = '2.11.36'
 }
 .\scripts\test-native-ui-release.ps1 @nativeUiTest
 ```
@@ -335,12 +335,11 @@ go test ./internal/storage -run TestStorageScale -count=1
 Remove-Item Env:DGP_STORAGE_SCALE_TEST
 ```
 
-`2.11.35` 发布源码通过 Go 模块校验、除本机代理单实例互斥用例外的全量测试和
-`go vet`；保留的 Vue 前端通过
-类型检查、83 项测试和生产构建；原生界面 Release 编译结果为 0 警告、0 错误。
-界面结构门禁、MSI 发布门禁、WiX 和 ICE 检查、组件与 MSI 的 Authenticode
-签名验证、产品版本及构建回执 SHA-256 核对均已通过。尚未在目标设备执行安装
-或升级演练。
+`2.11.36` 发布源码通过模块校验、服务、存储、风险、报告、采集器和服务运行时
+回归、采集器 race 检测及 `go vet`。原生界面 Release 编译为 0 警告、0 错误，
+会话、分页、范围和草稿状态测试通过。界面结构门禁、MSI 发布门禁、WiX/ICE、
+组件和 MSI 的 Authenticode 签名、产品版本及构建回执 SHA-256 核对均已通过。
+尚未在目标设备执行安装或升级演练。
 
 ## 已知限制
 

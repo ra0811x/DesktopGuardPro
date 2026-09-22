@@ -91,6 +91,8 @@ public partial class App : Application
     private TextBlock? sessionStartPreviewStatus;
     private TextBlock? dashboardModeSummary;
     private TextBlock? dashboardTargetSummary;
+    private Border? dashboardProtectionBadge;
+    private Expander? dashboardScopeExpander;
     private TextBox? sessionName;
     private TextBlock? sessionStatus;
     private Button? protectionButton;
@@ -107,7 +109,6 @@ public partial class App : Application
     private Button? loadMoreTimelineButton;
     private string timelineCursor = "";
     private bool timelineHasMore;
-    private bool timelineLoading;
     private ComboBox? timelineCategoryFilter;
     private ComboBox? timelineSeverityFilter;
     private TextBox? timelineUserFilter;
@@ -481,6 +482,8 @@ public partial class App : Application
 
     private void ApplySession(SessionInfo? session)
     {
+        if (session is not null && analysisWorkspace.Session?.Id == session.Id)
+            SelectAnalysisSession(AnalysisSessionFrom(session));
         UpdateGlobalProtectionStatus(session);
         if (sessionStatus is null || protectionButton is null || protectionBusy)
         {
@@ -540,6 +543,12 @@ public partial class App : Application
                     pauseProtectionButton.Visibility = Visibility.Collapsed;
                 }
                 break;
+            case "completed":
+            case "failed":
+                sessionStatus.Text = $"{session.Name} · {FormatSessionState(session.State)}。可查看本次结果或从历史会话回看。";
+                protectionButton.Content = "开启新保护";
+                protectionButton.IsEnabled = true;
+                break;
             default:
                 sessionStatus.Text = "尚未开启保护。";
                 protectionButton.Content = "开启保护";
@@ -588,6 +597,15 @@ public partial class App : Application
             };
         globalProtectionStatusFullText = fullText;
         globalProtectionStatusCompactText = compactText;
+        if (dashboardProtectionBadge is not null && sessionStatus is not null)
+        {
+            var healthy = !serviceUnavailable && session?.State == "active";
+            var attention = !serviceUnavailable && session?.State is "paused" or "degraded" or "baseline_review";
+            dashboardProtectionBadge.Background = ThemeBrush(healthy ? "DgpTealSoftBrush"
+                : attention ? "DgpAmberSurfaceBrush" : serviceUnavailable ? "DgpErrorSurfaceBrush" : "DgpInformationBrush");
+            sessionStatus.Foreground = ThemeBrush(healthy ? "DgpTealBrush"
+                : attention ? "DgpAmberTextBrush" : "DgpDashboardTextBrush");
+        }
         if (globalProtectionStatusIndicator is not null)
         {
             globalProtectionStatusIndicator.Fill = new SolidColorBrush(color);
@@ -891,6 +909,9 @@ public partial class App : Application
     };
 
     private MonitoringPolicyInfo PolicyForMode(string mode)
+        => monitoringDrafts.Read(mode, SavedPolicyForMode(mode));
+
+    private MonitoringPolicyInfo SavedPolicyForMode(string mode)
     {
         if (currentMonitoringProfiles is null)
         {
@@ -905,13 +926,18 @@ public partial class App : Application
         };
     }
 
-    private void ApplyMonitoringProfiles(MonitoringProfilesInfo? profiles)
+    private void ApplyMonitoringProfiles(MonitoringProfilesInfo? profiles, bool preserveDraft = true)
     {
+        var editingPolicy = monitoringPolicyLoaded ? MonitoringPolicyFromControls() : null;
+        if (preserveDraft && editingPolicy is not null)
+            monitoringDrafts.Keep(editingMonitoringMode, editingPolicy, SavedPolicyForMode(editingMonitoringMode));
+        else if (!preserveDraft) monitoringDrafts.Remove(editingMonitoringMode);
         if (profiles is not null)
         {
             currentMonitoringProfiles = profiles;
         }
         ApplyMonitoringPolicy(PolicyForMode(editingMonitoringMode));
+        monitoringPolicyLoaded = true;
     }
 
     private InputShieldPolicyInfo TemporaryInputPolicy() =>
@@ -955,17 +981,24 @@ public partial class App : Application
         var instruction = InputShieldUnlockInstruction(TemporaryInputPolicy());
         var hint = $"可{instruction} 呼出身份验证窗口；触发后键盘和鼠标临时放开 20 秒以完成验证。";
         if (inputShieldUnlockHint is not null) inputShieldUnlockHint.Text = hint;
-        if (temporaryInputUnlockHint is not null) temporaryInputUnlockHint.Text = hint;
+        if (temporaryInputUnlockHint is not null)
+        {
+            temporaryInputUnlockHint.Text = $"{instruction} 验证解锁 · 验证窗口开放 20 秒";
+            ToolTipService.SetToolTip(temporaryInputUnlockHint, hint);
+        }
     }
 
     private void SelectMonitoringProfile(string mode)
     {
+        if (monitoringPolicyLoaded)
+            monitoringDrafts.Keep(editingMonitoringMode, MonitoringPolicyFromControls(), SavedPolicyForMode(editingMonitoringMode));
         editingMonitoringMode = mode;
         ApplyMonitoringPolicy(PolicyForMode(mode));
     }
 
     private async Task LoadMonitoringPolicyAsync()
     {
+        if (monitoringPolicyLoaded) return;
         if (monitoringPolicyStatus is null)
         {
             return;
@@ -1007,7 +1040,12 @@ public partial class App : Application
             var result = await client.UpdateMonitoringPolicyAsync(policy, CancellationToken.None);
             if (result.MonitoringProfiles is not null)
             {
-                ApplyMonitoringProfiles(result.MonitoringProfiles);
+                // Preserve edits made while the save request was in flight,
+                // including edits in a different mode.
+                monitoringDrafts.Keep(editingMonitoringMode, MonitoringPolicyFromControls(), SavedPolicyForMode(editingMonitoringMode));
+                currentMonitoringProfiles = result.MonitoringProfiles;
+                monitoringDrafts.Keep(policy.Mode, monitoringDrafts.Read(policy.Mode, policy), SavedPolicyForMode(policy.Mode));
+                ApplyMonitoringPolicy(PolicyForMode(editingMonitoringMode));
             }
             else
             {
@@ -1029,12 +1067,17 @@ public partial class App : Application
         {
             return;
         }
-        monitoringPolicyStatus.Text = $"正在恢复“{MonitoringModeName(editingMonitoringMode)}”模式默认设置...";
+        var resetMode = editingMonitoringMode;
+        monitoringPolicyStatus.Text = $"正在恢复“{MonitoringModeName(resetMode)}”模式默认设置...";
         try
         {
             var result = await new ControlPipeClient().ResetMonitoringPolicyAsync(
-                editingMonitoringMode, CancellationToken.None);
-            ApplyMonitoringProfiles(result.MonitoringProfiles);
+                resetMode, CancellationToken.None);
+            if (editingMonitoringMode != resetMode)
+                monitoringDrafts.Keep(editingMonitoringMode, MonitoringPolicyFromControls(), SavedPolicyForMode(editingMonitoringMode));
+            monitoringDrafts.Remove(resetMode);
+            if (result.MonitoringProfiles is not null) currentMonitoringProfiles = result.MonitoringProfiles;
+            ApplyMonitoringPolicy(PolicyForMode(editingMonitoringMode));
             await LoadSessionStartPreviewAsync();
         }
         catch
@@ -1260,13 +1303,13 @@ public partial class App : Application
         var previousMode = editingMonitoringMode;
         if (currentMonitoringProfiles is not null)
         {
-            editingMonitoringMode = "custom";
+            SelectMonitoringProfile("custom");
             if (settingsMonitoringMode is not null)
             {
                 settingsMonitoringMode.SelectedItem = settingsMonitoringMode.Items.OfType<ComboBoxItem>()
                     .FirstOrDefault(item => string.Equals(item.Tag as string, "custom", StringComparison.Ordinal));
             }
-            ApplyMonitoringPolicy(currentMonitoringProfiles.Custom.Resolved());
+            ApplyMonitoringPolicy(PolicyForMode("custom").Resolved());
         }
         var policy = currentMonitoringPolicy.Resolved();
         var details = policy.InputShield!;
@@ -1543,7 +1586,7 @@ public partial class App : Application
         }
         else if (!result.Enabled)
         {
-            temporaryInputControlStatus.Text = "当前未启用临时输入控制。它可独立运行，不会启动任何审计模块。";
+            temporaryInputControlStatus.Text = "未锁定 · 选择需要暂时停用的设备";
         }
         else if (temporary)
         {
@@ -1567,11 +1610,14 @@ public partial class App : Application
         {
             var stopping = temporary && string.Equals(result.State, "stopping", StringComparison.Ordinal);
             startTemporaryInputControlButton.IsEnabled = !stopping && !temporary;
-            startTemporaryInputControlButton.Content = stopping ? "正在停止" : temporary ? "请先停止当前控制" : "启动临时控制";
+            startTemporaryInputControlButton.Visibility = temporary && result.Enabled
+                ? Visibility.Collapsed : Visibility.Visible;
+            startTemporaryInputControlButton.Content = stopping ? "正在解除…" : temporary ? "锁定中" : "启动锁定";
         }
         if (stopTemporaryInputControlButton is not null)
         {
             stopTemporaryInputControlButton.IsEnabled = temporary && result.Enabled;
+            stopTemporaryInputControlButton.Visibility = temporary && result.Enabled ? Visibility.Visible : Visibility.Collapsed;
         }
         if (temporary && result.State is ("starting" or "degraded" or "stopping"))
         {
@@ -1985,9 +2031,9 @@ public partial class App : Application
             ReplaceExclusionInputs(result.Exclusions ?? Array.Empty<MonitoringExclusionInfo>());
             exclusionStatus.Text = $"已保存 {result.Exclusions?.Count ?? 0} 条排除规则。";
         }
-        catch
+        catch (Exception exception)
         {
-            exclusionStatus.Text = "无法保存排除规则。";
+            exclusionStatus.Text = $"无法保存排除规则：{exception.Message}";
         }
     }
 
@@ -2030,11 +2076,17 @@ public partial class App : Application
         var mode = FormatMonitoringMode(preview.MonitoringMode);
         if (dashboardModeSummary is not null)
         {
-            dashboardModeSummary.Text = mode;
+            dashboardModeSummary.Text = preview.MonitoringMode switch
+            {
+                "relaxed" => "轻量记录文件与设备变化",
+                "strict" => "增加文件读取审计与密集采样",
+                "custom" => "按已保存的自定义规则采集",
+                _ => "记录文件、进程、系统与设备变化",
+            };
         }
         if (dashboardTargetSummary is not null)
         {
-            dashboardTargetSummary.Text = $"{preview.MonitoredTargetCount} 个";
+            dashboardTargetSummary.Text = $"{preview.MonitoredTargetCount} 个目标 · 管理";
         }
         var administrator = preview.Impact.RequiresAdministrator ? "需要管理员权限" : "不需要管理员权限";
         var strictAuditNotice = preview.MonitoringLevel == "strict"
@@ -2441,6 +2493,13 @@ public partial class App : Application
                     Text = item.Session.Name,
                     FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 });
+                var openSession = new Button { Content = "打开会话" };
+                openSession.Click += async (_, _) =>
+                {
+                    SelectAnalysisSession(AnalysisSessionFrom(item.Session));
+                    await NavigateAnalysisAsync("audit");
+                };
+                row.Children.Add(openSession);
                 row.Children.Add(new TextBlock
                 {
                     Text = $"{FormatSessionState(item.Session.State)} · 创建于 {item.CreatedUtc.LocalDateTime:yyyy-MM-dd HH:mm:ss} · " +
@@ -2500,91 +2559,116 @@ public partial class App : Application
 
     private async Task LoadTimelineAsync(bool append)
     {
-        if (timelineLoading || timelineList is null || timelineStatus is null || loadMoreTimelineButton is null)
-        {
-            return;
-        }
-        timelineLoading = true;
+        if (timelineList is null || timelineStatus is null || loadMoreTimelineButton is null) return;
+        var request = ++timelineRequest;
         loadMoreTimelineButton.IsEnabled = false;
         timelineStatus.Text = "正在读取事件时间线...";
         try
         {
             var client = new ControlPipeClient();
-            var health = await client.GetHealthAsync(CancellationToken.None);
-            if (health.Session is null)
+            var session = await ResolveAnalysisSessionAsync(client);
+            request = ++timelineRequest;
+            if (session is null)
             {
-                timelineStatus.Text = "当前没有可查询的保护会话。";
+                timelineList.Items.Clear();
+                timelineStatus.Text = "还没有可查询的保护会话。请先开启保护或选择历史记录。";
                 return;
             }
+            var revision = analysisWorkspace.Revision;
             if (!TryReadTimelineTime(timelineFromFilter?.Text, out var fromUtc) ||
-                !TryReadTimelineTime(timelineToFilter?.Text, out var toUtc))
+                !TryReadTimelineTime(timelineToFilter?.Text, out var toUtc) ||
+                (fromUtc.HasValue && toUtc.HasValue && fromUtc > toUtc))
             {
-                timelineStatus.Text = "时间筛选格式无效，请输入可识别的日期时间。";
+                timelineStatus.Text = "时间筛选无效，请检查日期格式及起止顺序。";
+                timelineHasMore = false;
+                timelineList.Items.Clear();
+                if (timelineDetail is not null) timelineDetail.Text = "请修正时间筛选后重新查询。";
                 return;
             }
             var categories = timelineCategoryFilter?.SelectedItem is ComboBoxItem { Tag: string category } && category.Length > 0
-                ? new[] { category }
-                : Array.Empty<string>();
+                ? new[] { category } : Array.Empty<string>();
             var severities = timelineSeverityFilter?.SelectedItem is ComboBoxItem { Tag: string severity } && severity.Length > 0
-                ? new[] { severity }
-                : Array.Empty<string>();
-            var page = await client.QueryTimelineAsync(
-                health.Session.Id, append ? timelineCursor : "", categories, severities,
-                timelineUserFilter?.Text.Trim() ?? string.Empty,
-                timelineProcessFilter?.Text.Trim() ?? string.Empty,
-                timelinePathFilter?.Text.Trim() ?? string.Empty,
-                fromUtc, toUtc, CancellationToken.None);
-            if (!append)
+                ? new[] { severity } : Array.Empty<string>();
+            var user = timelineUserFilter?.Text.Trim() ?? "";
+            var process = timelineProcessFilter?.Text.Trim() ?? "";
+            var path = timelinePathFilter?.Text.Trim() ?? "";
+            var queryKey = JsonSerializer.Serialize(new { session.Id, categories, severities, user, process, path, fromUtc, toUtc });
+            var cursor = timelinePaging.Begin(queryKey, append);
+            if (cursor.Length == 0)
             {
                 timelineList.Items.Clear();
+                if (timelineDetail is not null) timelineDetail.Text = "选择一条事件以查看详情。";
             }
-            foreach (var record in page.Records)
+            var evidenceId = pendingEvidenceId;
+            do
             {
-                var eventInfo = record.Event;
-                var hashStatus = ReadContentHashStatus(record.Payload);
-                timelineList.Items.Add(new ListViewItem
+                var page = await client.QueryTimelineAsync(session.Id, cursor, categories, severities,
+                    user, process, path, fromUtc, toUtc, CancellationToken.None);
+                if (request != timelineRequest || !analysisWorkspace.IsCurrent(session.Id, revision)) return;
+                foreach (var record in page.Records)
                 {
-                    Tag = (eventInfo, hashStatus, record.Payload, record.PreviewTruncated),
-                    Content = new StackPanel
+                    var eventInfo = record.Event;
+                    var hashStatus = ReadContentHashStatus(record.Payload);
+                    var row = new ListViewItem
                     {
-                        Spacing = 4,
-                        Margin = new Thickness(0, 4, 0, 4),
-                        Children =
+                        Tag = (eventInfo, hashStatus, record.Payload, record.PreviewTruncated),
+                        Content = new StackPanel
                         {
-                            new TextBlock
+                            Spacing = 4, Margin = new Thickness(0, 4, 0, 4),
+                            Children =
                             {
-                                Text = $"#{eventInfo.Sequence} · {FormatTimelineCategory(eventInfo.Category)} · {FormatTimelineAction(eventInfo.Action)}",
-                                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                            },
-                            new TextBlock
-                            {
-	                                Text = $"{eventInfo.ObservedUtc.LocalDateTime:yyyy-MM-dd HH:mm:ss} · {eventInfo.ObjectKey ?? "未提供对象"}" +
-	                                    $" · 进程 {eventInfo.ProcessKey ?? "未归因"} · {eventInfo.Source}",
-                                Foreground = ThemeBrush("DgpSecondaryTextBrush"),
+                                new TextBlock
+                                {
+                                    Text = $"#{eventInfo.Sequence} · {FormatTimelineCategory(eventInfo.Category)} · {FormatTimelineAction(eventInfo.Action)}",
+                                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                                },
+                                new TextBlock
+                                {
+                                    Text = $"{eventInfo.ObservedUtc.LocalDateTime:yyyy-MM-dd HH:mm:ss} · {eventInfo.ObjectKey ?? "未提供对象"}" +
+                                        $" · 进程 {eventInfo.ProcessKey ?? "未归因"} · {eventInfo.Source}",
+                                    Foreground = ThemeBrush("DgpSecondaryTextBrush"),
+                                },
                             },
                         },
-                    },
-                });
+                    };
+                    timelineList.Items.Add(row);
+                    if (evidenceId == eventInfo.EventId)
+                    {
+                        timelineList.SelectedItem = row;
+                        timelineList.ScrollIntoView(row);
+                        pendingEvidenceId = null;
+                        evidenceId = null;
+                    }
+                }
+                timelineCursor = page.NextCursor ?? "";
+                timelinePaging.Complete(timelineCursor);
+                timelineHasMore = page.HasMore && timelineCursor.Length > 0;
+                var coverageGaps = page.Records.Count(record => IsCoverageGapAction(record.Event.Action));
+                var pendingHashes = page.Records.Count(record => ReadContentHashStatus(record.Payload) == "waiting");
+                timelineStatus.Text = page.IntegrityVerified
+                    ? $"已显示 {timelineList.Items.Count} 条事件，本页完整性已验证。{FormatTimelineHealthStatus(coverageGaps, pendingHashes)}"
+                    : $"已显示 {timelineList.Items.Count} 条事件，完整性等待验证。{FormatTimelineHealthStatus(coverageGaps, pendingHashes)}";
+                cursor = timelineCursor;
+            } while (evidenceId is not null && timelineHasMore);
+            if (evidenceId is not null)
+            {
+                timelineStatus.Text = "未找到这条证据事件，记录可能已清理；可重置筛选后重试。";
+                pendingEvidenceId = null;
             }
-            timelineCursor = page.NextCursor ?? "";
-            timelineHasMore = page.HasMore && timelineCursor.Length > 0;
-            var coverageGaps = page.Records.Count(record => IsCoverageGapAction(record.Event.Action));
-            var pendingHashes = page.Records.Count(record => ReadContentHashStatus(record.Payload) == "waiting");
-            timelineStatus.Text = page.IntegrityVerified
-                ? $"已显示 {timelineList.Items.Count} 条事件，本页完整性已验证。{FormatTimelineHealthStatus(coverageGaps, pendingHashes)}"
-                : $"已显示 {timelineList.Items.Count} 条事件，完整性等待验证。{FormatTimelineHealthStatus(coverageGaps, pendingHashes)}";
         }
         catch
         {
-            timelineStatus.Text = "无法读取事件时间线。";
+            if (request != timelineRequest) return;
+            timelineList.Items.Clear();
+            if (timelineDetail is not null) timelineDetail.Text = "事件详情暂不可用。";
+            timelineHasMore = false;
+            timelineStatus.Text = "无法读取所选会话的事件时间线，请检查服务后重试。";
         }
         finally
         {
-            timelineLoading = false;
-            loadMoreTimelineButton.IsEnabled = timelineHasMore;
+            if (request == timelineRequest) loadMoreTimelineButton.IsEnabled = timelineHasMore;
         }
     }
-
     private static bool TryReadTimelineTime(string? value, out DateTimeOffset? utc)
     {
         utc = null;
@@ -2607,20 +2691,32 @@ public partial class App : Application
             return;
         }
         riskStatus.Text = "正在评估会话风险...";
+        riskList.Items.Clear();
+        var request = ++riskRequest;
         try
         {
             var client = new ControlPipeClient();
-            var health = await client.GetHealthAsync(CancellationToken.None);
-            if (health.Session is null)
+            var session = await ResolveAnalysisSessionAsync(client);
+            request = ++riskRequest;
+            if (session is null)
             {
                 riskStatus.Text = "当前没有可评估的保护会话。";
                 return;
             }
-            var evaluation = await client.EvaluateRiskAsync(health.Session.Id, CancellationToken.None);
+            var revision = analysisWorkspace.Revision;
+            var evaluation = await client.EvaluateRiskAsync(session.Id, CancellationToken.None);
+            if (request != riskRequest || !analysisWorkspace.IsCurrent(session.Id, revision)) return;
             riskList.Items.Clear();
             foreach (var finding in evaluation.Findings)
             {
                 var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                var evidenceLinks = new StackPanel { Spacing = 6 };
+                foreach (var evidence in finding.Evidence)
+                {
+                    var link = new Button { Content = $"查看事件 #{evidence.Sequence}" };
+                    link.Click += async (_, _) => await OpenRiskEvidenceAsync(session, evidence);
+                    evidenceLinks.Children.Add(link);
+                }
                 foreach (var choice in new[]
                 {
                     (Label: "已知", Status: "known"),
@@ -2639,7 +2735,7 @@ public partial class App : Application
 					$"对象 {evidence.ObjectKey ?? "（无）"}");
 				var evidenceDetails = new Expander
 				{
-					Header = $"关联事件与原始字段（{finding.Evidence.Count}）",
+                    Header = $"关联事件（{finding.Evidence.Count}）",
 					Content = new TextBlock
 					{
 						Text = $"触发规则：{finding.RuleId}\n" +
@@ -2676,6 +2772,7 @@ public partial class App : Application
                             },
 							evidenceDetails,
                             actions,
+                            evidenceLinks,
                         },
                     },
                 });
@@ -2684,7 +2781,7 @@ public partial class App : Application
         }
         catch
         {
-            riskStatus.Text = "无法评估会话风险。";
+            if (request == riskRequest) riskStatus.Text = "无法评估所选会话风险，请检查服务后重试。";
         }
     }
 
@@ -2698,7 +2795,7 @@ public partial class App : Application
         try
         {
             await new ControlPipeClient().UpdateRiskFindingStatusAsync(sessionId, findingId, status, CancellationToken.None);
-            await LoadRiskAsync();
+            if (analysisWorkspace.Session?.Id == sessionId) await LoadRiskAsync();
         }
         catch
         {
@@ -2713,21 +2810,31 @@ public partial class App : Application
             return;
         }
         assetStatus.Text = "正在读取资产变化...";
+        assetList.Items.Clear();
+        if (assetDetail is not null) assetDetail.Text = "选择一项资产变化以查看详情。";
+        var request = ++assetRequest;
         try
         {
             var client = new ControlPipeClient();
-            var health = await client.GetHealthAsync(CancellationToken.None);
-            if (health.Session is null)
+            var session = await ResolveAnalysisSessionAsync(client);
+            request = ++assetRequest;
+            if (session is null)
             {
                 assetStatus.Text = "当前没有可查询的保护会话。";
                 return;
             }
+            var revision = analysisWorkspace.Revision;
             var result = await client.QueryAssetDifferencesAsync(
-                health.Session.Id, assetCategories, CancellationToken.None);
+                session.Id, assetCategories.ToArray(), CancellationToken.None);
+            if (request != assetRequest || !analysisWorkspace.IsCurrent(session.Id, revision)) return;
             assetList.Items.Clear();
             if (!result.BaselineAvailable)
             {
-                assetStatus.Text = "当前会话没有可用的资产基线。";
+                assetStatus.Text = session.AssetMonitoringEnabled == false
+                    ? "这次会话未启用软件、系统或设备资产采集，没有资产差异可比较。"
+                    : session.State is "active" or "paused" or "preparing" or "degraded" or "finalizing"
+                    ? "保护结束并完成收尾后生成资产差异。"
+                    : "这次会话缺少完整的开始/结束资产快照；可能未启用资产采集或采集未完成。可在审计中查看采集健康事件。";
                 return;
             }
             foreach (var difference in result.Differences)
@@ -2764,7 +2871,7 @@ public partial class App : Application
         }
         catch
         {
-            assetStatus.Text = "无法读取资产变化。";
+            if (request == assetRequest) assetStatus.Text = "无法读取所选会话资产变化，请检查服务后重试。";
         }
     }
 
@@ -2787,21 +2894,27 @@ public partial class App : Application
             reportStatus.Text = "当前设置会包含敏感审计信息，请先确认后再导出。";
             return;
         }
+        if (!ReportSequenceRange.TryParse(reportFromSequence?.Text ?? "", reportToSequence?.Text ?? "",
+                out var fromSequence, out var toSequence, out var rangeError))
+        {
+            reportStatus.Text = rangeError;
+            return;
+        }
         reportExporting = true;
         reportStatus.Text = "正在生成并校验报告...";
         try
         {
             var client = new ControlPipeClient();
-            var health = await client.GetHealthAsync(CancellationToken.None);
-            if (health.Session is null)
+            var session = await ResolveAnalysisSessionAsync(client);
+            if (session is null)
             {
                 reportStatus.Text = "当前没有可导出的保护会话。";
                 return;
             }
             var result = await client.ExportReportAsync(
-                health.Session.Id, format,
+                session.Id, format,
                 new { objectDetails, includeProcessKey, includePayload, includeUsernames, includeWindowTitles, maximumTextLength = 512 },
-                null, null, CancellationToken.None);
+                fromSequence, toSequence, CancellationToken.None);
             if (mainWindow is null)
             {
                 return;
@@ -2809,7 +2922,7 @@ public partial class App : Application
             var extension = format == "json" ? ".json" : format == "markdown" ? ".md" : ".html";
             var picker = new FileSavePicker
             {
-                SuggestedFileName = $"{SanitizeFileName(health.Session.Name)}-{result.GeneratedUtc:yyyyMMdd-HHmmss}",
+                SuggestedFileName = $"{SanitizeFileName(session.Name)}-{result.GeneratedUtc:yyyyMMdd-HHmmss}",
                 SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
             };
             picker.FileTypeChoices.Add(format.ToUpperInvariant() + " 报告", new List<string> { extension });
@@ -2828,11 +2941,13 @@ public partial class App : Application
                 manifestPath,
                 JsonSerializer.Serialize(result.Verification, new JsonSerializerOptions { WriteIndented = true }),
                 CancellationToken.None);
-            reportStatus.Text = $"报告和验证清单已保存到 {Path.GetDirectoryName(reportFile.Path)}。";
+            reportStatus.Text = $"会话“{session.Name}”的报告和验证清单已保存到 {Path.GetDirectoryName(reportFile.Path)}。";
         }
-        catch
+        catch (Exception exception)
         {
-            reportStatus.Text = "无法生成或保存报告。";
+            reportStatus.Text = exception is InvalidOperationException
+                ? $"报告未生成：{exception.Message}"
+                : "无法生成或保存报告，请检查服务与保存目录权限；大报告可填写较小序号范围重试。";
         }
         finally
         {
@@ -3254,7 +3369,9 @@ public partial class App : Application
             SelectedIndex = 1,
         };
         monitoringMode.MaxWidth = 280;
-        monitoringMode.MinWidth = 220;
+        monitoringMode.MinWidth = 160;
+        monitoringMode.HorizontalAlignment = HorizontalAlignment.Stretch;
+        monitoringMode.MinHeight = 40;
         monitoringMode.Items.Add(new ComboBoxItem { Content = "宽松", Tag = "relaxed" });
         monitoringMode.Items.Add(new ComboBoxItem { Content = "标准", Tag = "standard" });
         monitoringMode.Items.Add(new ComboBoxItem { Content = "严格", Tag = "strict" });
@@ -3268,11 +3385,12 @@ public partial class App : Application
         };
         sessionName = new TextBox
         {
-            PlaceholderText = "输入会话名称；留空时自动命名",
-            HorizontalAlignment = HorizontalAlignment.Left,
+            Header = "会话名称（可选）",
+            PlaceholderText = "留空时自动命名",
+            HorizontalAlignment = HorizontalAlignment.Stretch,
         };
         sessionName.MaxWidth = 420;
-        sessionName.MinWidth = 280;
+        sessionName.MinWidth = 0;
         sessionStatus = new TextBlock
         {
             Text = "正在读取保护会话...",
@@ -3281,15 +3399,15 @@ public partial class App : Application
         };
         dashboardModeSummary = new TextBlock
         {
-            Text = "标准",
-            FontSize = 18,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = ThemeBrush("DgpPrimaryTextBrush"),
+            Text = "记录文件、进程、系统与设备变化",
+            FontSize = 13,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = ThemeBrush("DgpDashboardMutedBrush"),
         };
         dashboardTargetSummary = new TextBlock
         {
             Text = "正在读取...",
-            FontSize = 18,
+            FontSize = 14,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Foreground = ThemeBrush("DgpPrimaryTextBrush"),
         };
@@ -3301,6 +3419,9 @@ public partial class App : Application
         protectionButton.Background = ThemeBrush("DgpBrandBrush");
         protectionButton.Foreground = ThemeBrush("DgpTitleBarTextBrush");
         protectionButton.Padding = new Thickness(16, 8, 16, 8);
+        protectionButton.MinHeight = 42;
+        protectionButton.MinWidth = 160;
+        protectionButton.CornerRadius = new CornerRadius(8);
         protectionButton.Click += async (_, _) => await performProtectionActionAsync();
         pauseProtectionButton = new Button
         {
@@ -3311,15 +3432,15 @@ public partial class App : Application
         pauseProtectionButton.Click += async (_, _) => await ToggleProtectionPauseAsync();
         temporaryKeyboardControl = new ToggleSwitch
         {
-            Header = "禁用本地键盘输入",
-            OnContent = "禁用",
+            Header = "键盘",
+            OnContent = "锁定",
             OffContent = "允许",
             IsOn = false,
         };
         temporaryMouseControl = new ToggleSwitch
         {
-            Header = "禁用本地鼠标点击与滚轮",
-            OnContent = "禁用",
+            Header = "鼠标点击与滚轮",
+            OnContent = "锁定",
             OffContent = "允许",
             IsOn = false,
         };
@@ -3332,6 +3453,7 @@ public partial class App : Application
             SmallChange = 5,
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
         };
+        ToolTipService.SetToolTip(temporaryMouseControl, "鼠标指针是否可移动由高级设置中的控制规则决定。");
         temporaryInputDurationMode = new ComboBox
         {
             Header = "结束方式",
@@ -3353,12 +3475,17 @@ public partial class App : Application
             Foreground = ThemeBrush("DgpSecondaryTextBrush"),
             TextWrapping = TextWrapping.Wrap,
         };
-        startTemporaryInputControlButton = new Button { Content = "启动临时控制" };
-        startTemporaryInputControlButton.Background = ThemeBrush("DgpBrandBrush");
+        startTemporaryInputControlButton = new Button { Content = "启动锁定", MinHeight = 42, MinWidth = 124, CornerRadius = new CornerRadius(8) };
+        startTemporaryInputControlButton.Background = ThemeBrush("DgpTealBrush");
         startTemporaryInputControlButton.Foreground = ThemeBrush("DgpTitleBarTextBrush");
         startTemporaryInputControlButton.Padding = new Thickness(14, 8, 14, 8);
         startTemporaryInputControlButton.Click += async (_, _) => await StartTemporaryInputControlAsync();
-        stopTemporaryInputControlButton = new Button { Content = "停止临时控制", IsEnabled = false };
+        stopTemporaryInputControlButton = new Button { Content = "解除锁定", IsEnabled = false, Visibility = Visibility.Collapsed };
+        stopTemporaryInputControlButton.MinHeight = 42;
+        stopTemporaryInputControlButton.MinWidth = 124;
+        stopTemporaryInputControlButton.CornerRadius = new CornerRadius(8);
+        stopTemporaryInputControlButton.Background = ThemeBrush("DgpTealBrush");
+        stopTemporaryInputControlButton.Foreground = ThemeBrush("DgpTitleBarTextBrush");
         stopTemporaryInputControlButton.Click += async (_, _) => await StopTemporaryInputControlAsync();
         inputShieldRuntimeStatus = new TextBlock
         {
@@ -3513,132 +3640,166 @@ public partial class App : Application
             TextWrapping = TextWrapping.Wrap,
         };
         UpdateTemporaryInputUnlockHints();
-        var overview = new StackPanel
+        var dashboardHeader = CreatePageHeader("仪表盘");
+        dashboardHeader.Background = null;
+        dashboardHeader.BorderThickness = new Thickness(0);
+        dashboardHeader.Padding = new Thickness(0, 4, 0, 8);
+
+        sessionStatus.FontSize = 15;
+        sessionStatus.Foreground = ThemeBrush("DgpDashboardTextBrush");
+        dashboardProtectionBadge = new Border
         {
-            Spacing = 12,
-            Margin = new Thickness(16),
+            Background = ThemeBrush("DgpInformationBrush"),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 10, 12, 10),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Child = sessionStatus,
+        };
+        var manageTargetsButton = new Button
+        {
+            Content = dashboardTargetSummary,
+            Background = ThemeBrush("DgpInformationBrush"),
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12, 8, 12, 8),
+            MinHeight = 40,
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        manageTargetsButton.Click += (_, _) => RevealDashboardScope();
+
+        var startOptions = CreateDashboardExpander("启动选项与采集详情",
+            new StackPanel
+            {
+                Spacing = 12,
+                Children = { sessionName, sessionStartPreviewStatus, openModeSettingsButton },
+            });
+        var protectionBody = new StackPanel
+        {
+            Spacing = 16,
             Children =
             {
-                CreatePageHeader("仪表盘"),
-                CreateDashboardCard(
-                    "保护概览",
-                    CreateDashboardSummary(sessionStatus, dashboardModeSummary, dashboardTargetSummary, protectionButton, pauseProtectionButton)),
-                CreateDashboardCard("快速操作",
-                    CreateBalancedDashboardColumns(
-                    CreateDashboardModule(
-                        "本次保护",
-                        new TextBlock
+                dashboardProtectionBadge,
+                CreateBalancedDashboardColumns(
+                    new StackPanel
+                    {
+                        Spacing = 8,
+                        Children =
                         {
-                            Text = "选择本次保护模式，核对启用范围后再启动。",
-                            Foreground = ThemeBrush("DgpSecondaryTextBrush"),
-                            TextWrapping = TextWrapping.Wrap,
+                            new TextBlock { Text = "保护模式", Foreground = ThemeBrush("DgpDashboardMutedBrush") },
+                            monitoringMode,
                         },
-                        CreateBalancedDashboardColumns(
-                            new StackPanel
-                            {
-                                Spacing = 6,
-                                Children =
-                                {
-                                    new TextBlock { Text = "保护模式", Foreground = ThemeBrush("DgpSecondaryTextBrush") },
-                                    monitoringMode,
-                                },
-                            },
-                            new StackPanel
-                            {
-                                Spacing = 6,
-                                Children =
-                                {
-                                    new TextBlock { Text = "会话名称", Foreground = ThemeBrush("DgpSecondaryTextBrush") },
-                                    sessionName,
-                                },
-                            },
-                            400),
-                        new Border
+                    },
+                    new StackPanel
+                    {
+                        Spacing = 8,
+                        Children =
                         {
-                            Background = ThemeBrush("DgpSurfaceBrush"),
-                            BorderBrush = ThemeBrush("DgpFineBorderBrush"),
-                            BorderThickness = new Thickness(1),
-                            CornerRadius = new CornerRadius(10),
-                            Padding = new Thickness(14),
-                            Child = sessionStartPreviewStatus,
+                            new TextBlock { Text = "监控目标", Foreground = ThemeBrush("DgpDashboardMutedBrush") },
+                            manageTargetsButton,
                         },
-                        openModeSettingsButton),
-                    CreateDashboardModule(
-                        "临时输入控制",
-                        new TextBlock
-                        {
-                            Text = "按需禁用键盘或鼠标，可定时释放，也可在身份验证后释放。",
-                            Foreground = ThemeBrush("DgpSecondaryTextBrush"),
-                            TextWrapping = TextWrapping.Wrap,
-                        },
-                        CreateBalancedDashboardColumns(temporaryKeyboardControl, temporaryMouseControl, 400),
-                        new TextBlock
-                        {
-                            Text = "鼠标指针是否可移动由“控制规则设置”中的选项决定。",
-                            Foreground = ThemeBrush("DgpSecondaryTextBrush"),
-                            TextWrapping = TextWrapping.Wrap,
-                        },
-                        temporaryInputTiming,
-                        new Border
-                        {
-                            Background = ThemeBrush("DgpSurfaceBrush"),
-                            BorderBrush = ThemeBrush("DgpFineBorderBrush"),
-                            BorderThickness = new Thickness(1),
-                            CornerRadius = new CornerRadius(10),
-                            Padding = new Thickness(12),
-                            Child = temporaryInputControlStatus,
-                        },
-                        temporaryInputUnlockHint,
-                        new StackPanel
-                        {
-                            Orientation = Orientation.Horizontal,
-                            Spacing = 8,
-                            Children = { startTemporaryInputControlButton, stopTemporaryInputControlButton, inputManagementButton },
-                        }))),
-                CreateDashboardCard("监控范围",
-                    CreateBalancedDashboardColumns(
-                            CreateDashboardModule(
-                                "监控目标",
-                                new TextBlock
-                                {
-                                    Text = "可配置目录或单文件；目录可选择是否包含子目录。",
-                                    Foreground = ThemeBrush("DgpSecondaryTextBrush"),
-                                    TextWrapping = TextWrapping.Wrap,
-                                },
-                                directoryInputScrollViewer,
-                                directoryActions,
-                                directoryStatus),
-                            CreateDashboardModule(
-                                "排除规则",
-                                new TextBlock
-                                {
-                                    Text = "可按路径、文件名、扩展名或进程名排除不需要采集的文件活动。",
-                                    Foreground = ThemeBrush("DgpSecondaryTextBrush"),
-                                    TextWrapping = TextWrapping.Wrap,
-                                },
-                                exclusionInputScrollViewer,
-                                exclusionActions,
-                                exclusionStatus),
-                            800)),
-                CreateDashboardCard("运行信息",
-                    CreateBalancedDashboardTriplet(
-                            CreateDashboardModule("后台状态", serviceStatus, refreshButton),
-                            CreateDashboardModule(
-                                "模式说明",
-                                new TextBlock
-                                {
-                                    Text = "宽松模式适合轻量文件与设备记录；标准模式覆盖常用审计；严格模式增加读取审计和更密集采样；自定义模式允许只启用单项功能。",
-                                    Foreground = ThemeBrush("DgpSecondaryTextBrush"),
-                                    TextWrapping = TextWrapping.Wrap,
-                                }),
-                            CreateDashboardModule(
-                                "采集范围",
-                                new TextBlock
-                                {
-                                    Text = "实际采集范围以“本次保护”中的功能清单为准。键盘鼠标临时控制独立运行；模式内的高级输入防护可在“系统设置”中配置。",
-                                    Foreground = ThemeBrush("DgpSecondaryTextBrush"),
-                                    TextWrapping = TextWrapping.Wrap,
-                                }))),
+                    }, 400),
+                dashboardModeSummary,
+                startOptions,
+            },
+        };
+        var protectionActions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 12,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Children = { pauseProtectionButton, protectionButton },
+        };
+        var inputBody = new StackPanel
+        {
+            Spacing = 16,
+            Children =
+            {
+                new Border
+                {
+                    Background = ThemeBrush("DgpTealSoftBrush"),
+                    CornerRadius = new CornerRadius(8),
+                    Padding = new Thickness(12, 10, 12, 10),
+                    Child = temporaryInputControlStatus,
+                },
+                CreateBalancedDashboardColumns(temporaryKeyboardControl, temporaryMouseControl, 300),
+                temporaryInputTiming,
+                temporaryInputUnlockHint,
+            },
+        };
+        var inputActions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Children = { startTemporaryInputControlButton, stopTemporaryInputControlButton },
+        };
+        inputManagementButton.Background = null;
+        inputManagementButton.BorderThickness = new Thickness(0);
+        inputManagementButton.Padding = new Thickness(0, 4, 0, 4);
+        inputManagementButton.Foreground = ThemeBrush("DgpTealBrush");
+        var inputFooter = new Grid
+        {
+            ColumnSpacing = 12,
+            ColumnDefinitions =
+            {
+                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
+                new ColumnDefinition { Width = GridLength.Auto },
+            },
+        };
+        inputManagementButton.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(inputActions, 1);
+        inputFooter.Children.Add(inputManagementButton);
+        inputFooter.Children.Add(inputActions);
+        var primaryTasks = CreateBalancedDashboardColumns(
+            CreateDashboardTask("电脑保护", "记录重要变化，结束后可回看和导出", "\uE83D",
+                protectionBody, protectionActions, false),
+            CreateDashboardTask("临时锁定键鼠", "暂时停用输入，可与电脑保护同时使用", "\uE72E",
+                inputBody, inputFooter, true), 820, 1.25);
+
+        dashboardScopeExpander = CreateDashboardExpander("监控范围与排除规则",
+            new StackPanel
+            {
+                Spacing = 20,
+                Children =
+                {
+                    new TextBlock { Text = "监控目标", FontSize = 17, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
+                    new TextBlock { Text = "开始保护后范围固定；修改目标或排除规则前请先结束保护。", TextWrapping = TextWrapping.Wrap },
+                    directoryInputScrollViewer,
+                    directoryActions,
+                    directoryStatus,
+                    new Border { Height = 1, Background = ThemeBrush("DgpDashboardLineBrush") },
+                    new TextBlock { Text = "排除规则", FontSize = 17, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
+                    exclusionInputScrollViewer,
+                    exclusionActions,
+                    exclusionStatus,
+                },
+            });
+        dashboardScopeExpander.Background = ThemeBrush("DgpSurfaceBrush");
+        var historyShortcut = CreateDashboardShortcut("历史记录", "回看已完成的保护", Symbol.Calendar);
+        var auditShortcut = CreateDashboardShortcut("审计结果", "查看当前会话事件", Symbol.Document);
+        var reportShortcut = CreateDashboardShortcut("导出报告", "保存当前会话结果", Symbol.Save);
+        var serviceDetails = CreateDashboardExpander("服务详情",
+            new StackPanel { Spacing = 8, Children = { serviceStatus, refreshButton } });
+        serviceDetails.Background = null;
+        serviceDetails.BorderThickness = new Thickness(0);
+        var overview = new StackPanel
+        {
+            Spacing = 20,
+            Margin = new Thickness(24),
+            Children =
+            {
+                dashboardHeader,
+                primaryTasks,
+                dashboardScopeExpander,
+                new TextBlock
+                {
+                    Text = "记录与报告",
+                    FontSize = 17,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    Margin = new Thickness(0, 4, 0, 0),
+                    Foreground = ThemeBrush("DgpDashboardTextBrush"),
+                },
+                CreateBalancedDashboardTriplet(historyShortcut, auditShortcut, reportShortcut, 720),
+                serviceDetails,
             },
         };
         historyList = new ListView
@@ -3742,6 +3903,18 @@ public partial class App : Application
             HorizontalAlignment = HorizontalAlignment.Left,
         };
         refreshTimelineButton.Click += async (_, _) => await loadTimelineAsync(false);
+        var exportEventButton = new Button { Content = "导出所选事件" };
+        exportEventButton.Click += async (_, _) => await ExportSelectedEventAsync();
+        var resetTimelineFilters = new Button { Content = "重置筛选" };
+        resetTimelineFilters.Click += async (_, _) =>
+        {
+            timelineCategoryFilter.SelectedIndex = 0;
+            timelineSeverityFilter.SelectedIndex = 0;
+            timelineUserFilter.Text = timelineProcessFilter.Text = timelinePathFilter.Text = "";
+            timelineFromFilter.Text = timelineToFilter.Text = "";
+            pendingEvidenceId = null;
+            await loadTimelineAsync(false);
+        };
         loadMoreTimelineButton = new Button
         {
             Content = "加载更多事件",
@@ -3756,6 +3929,7 @@ public partial class App : Application
             Children =
             {
                 CreatePageHeader("审计结果"),
+                CreateAnalysisSessionBar(),
                 CreateAdaptiveColumns(
                     CreateSectionCard(
                         "事件时间线",
@@ -3776,8 +3950,9 @@ public partial class App : Application
                                 timelineProcessFilter,
                                 timelinePathFilter,
                                 timelineFromFilter,
-                                timelineToFilter),
-                            CreateSectionCard("事件详情", timelineDetail),
+                                timelineToFilter,
+                                resetTimelineFilters),
+                            CreateSectionCard("事件详情", timelineDetail, exportEventButton),
                         },
                     }),
             },
@@ -3805,6 +3980,7 @@ public partial class App : Application
             Children =
             {
                 CreatePageHeader("风险分析"),
+                CreateAnalysisSessionBar(),
                 CreateAdaptiveColumns(
                     CreateSectionCard("风险发现", riskList),
                     CreateSectionCard(
@@ -3900,6 +4076,7 @@ public partial class App : Application
             Children =
             {
                 CreatePageHeader("资产差异"),
+                CreateAnalysisSessionBar(),
                 CreateAdaptiveColumns(
                     CreateSectionCard(
                         "资产变化",
@@ -3939,6 +4116,8 @@ public partial class App : Application
         reportIncludeUsernames = new CheckBox { Content = "原始负载中保留用户名" };
         reportIncludeWindowTitles = new CheckBox { Content = "原始负载中保留窗口标题" };
         reportSensitiveAcknowledgement = new CheckBox { Content = "我已确认本次导出包含敏感信息" };
+        reportFromSequence = new TextBox { Header = "起始事件序号", PlaceholderText = "留空导出整个会话，例如 1" };
+        reportToSequence = new TextBox { Header = "结束事件序号", PlaceholderText = "例如 100000" };
         reportStatus = new TextBlock
         {
             Text = "默认导出保留完成审计所需的必要细节。",
@@ -3958,11 +4137,19 @@ public partial class App : Application
             Children =
             {
                 CreatePageHeader("报告导出"),
+                CreateAnalysisSessionBar(),
                 CreateAdaptiveColumns(
                     CreateSectionCard(
                         "导出设置",
                         new TextBlock { Text = "报告格式", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
                         reportFormat,
+                        reportFromSequence,
+                        reportToSequence,
+                        new TextBlock
+                        {
+                            Text = "每份最多 100,000 条事件。序号范围包含其中全部事件；资产差异仍是整个会话的前后比较。",
+                            TextWrapping = TextWrapping.Wrap,
+                        },
                         new TextBlock { Text = "对象细节", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
                         reportObjectDetails,
                         reportIncludeProcessKey,
@@ -4147,7 +4334,7 @@ public partial class App : Application
                     "模式配置",
                     new TextBlock
                     {
-                        Text = "宽松、标准、严格和自定义四种模式都可以查看与调整。修改仅影响以后选择该模式创建的新会话。",
+                        Text = "修改仅影响以后选择该模式创建的新会话。切换页面或模式会保留本次打开期间的草稿；关闭软件前请保存。",
                         TextWrapping = TextWrapping.Wrap,
                         Foreground = ThemeBrush("DgpSecondaryTextBrush"),
                     },
@@ -4202,6 +4389,7 @@ public partial class App : Application
             FontSize = 15,
             Content = overviewPage,
         };
+        shellNavigation = navigation;
         navigation.CornerRadius = new CornerRadius(0);
         navigation.Resources["NavigationViewDefaultPaneBackground"] = ThemeBrush("DgpSidebarBrush");
         navigation.Resources["NavigationViewExpandedPaneBackground"] = ThemeBrush("DgpSidebarBrush");
@@ -4275,6 +4463,23 @@ public partial class App : Application
             Icon = new SymbolIcon(Symbol.Setting),
             Tag = "monitoring-policy",
         });
+        foreach (var (shortcut, tag) in new[]
+                 { (historyShortcut, "history"), (auditShortcut, "audit"), (reportShortcut, "reports") })
+        {
+            shortcut.Click += async (_, _) =>
+            {
+                if (tag is "audit" or "reports")
+                {
+                    try
+                    {
+                        var session = (await new ControlPipeClient().GetHealthAsync(CancellationToken.None)).Session;
+                        if (session is not null) SelectAnalysisSession(AnalysisSessionFrom(session));
+                    }
+                    catch { }
+                }
+                await NavigateAnalysisAsync(tag);
+            };
+        }
         openModeSettingsButton.Click += (_, _) =>
         {
             navigation.SelectedItem = navigation.MenuItems
@@ -4307,6 +4512,7 @@ public partial class App : Application
                     break;
                 case "reports":
                     navigation.Content = reportsPage;
+                    await ReloadAnalysisPageAsync();
                     break;
                 case "monitoring-policy":
                     navigation.Content = monitoringPolicyPage;
@@ -4403,41 +4609,55 @@ public partial class App : Application
         };
     }
 
-    private Border CreateDashboardCard(string title, params UIElement[] children)
+    private Border CreateDashboardTask(
+        string title, string purpose, string glyph,
+        FrameworkElement body, FrameworkElement footer, bool inputTask)
     {
-        var content = new StackPanel
+        var heading = new Grid
         {
-            Spacing = 12,
+            ColumnSpacing = 14,
+            ColumnDefinitions =
+            {
+                new ColumnDefinition { Width = GridLength.Auto },
+                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
+            },
         };
-        content.Children.Add(new TextBlock
+        heading.Children.Add(new Border
         {
-            Text = title,
-            FontSize = 18,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = ThemeBrush("DgpPrimaryTextBrush"),
-            TextWrapping = TextWrapping.Wrap,
+            Width = 48, Height = 48,
+            CornerRadius = new CornerRadius(14),
+            Background = ThemeBrush(inputTask ? "DgpTealSoftBrush" : "DgpInformationBrush"),
+            Child = new FontIcon
+            {
+                Glyph = glyph, FontSize = 24,
+                Foreground = ThemeBrush(inputTask ? "DgpTealBrush" : "DgpBrandBrush"),
+            },
         });
-        foreach (var child in children)
+        var headingText = new StackPanel
         {
-            content.Children.Add(child);
-        }
-        return new Border
-        {
-            Background = ThemeBrush("DgpSurfaceBrush"),
-            BorderBrush = ThemeBrush("DgpBorderBrush"),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(16),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Top,
-            Child = content,
+            Spacing = 5,
+            VerticalAlignment = VerticalAlignment.Center,
+            Children =
+            {
+                new TextBlock
+                {
+                    Text = title, FontSize = 23,
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    Foreground = ThemeBrush("DgpDashboardTextBrush"),
+                },
+                new TextBlock
+                {
+                    Text = purpose, FontSize = 13,
+                    Foreground = ThemeBrush("DgpDashboardMutedBrush"),
+                    TextWrapping = TextWrapping.Wrap,
+                },
+            },
         };
-    }
-
-    private Border CreateDashboardModule(string title, params UIElement[] children)
-    {
+        Grid.SetColumn(headingText, 1);
+        heading.Children.Add(headingText);
         var content = new Grid
         {
+            RowSpacing = 24,
             RowDefinitions =
             {
                 new RowDefinition { Height = GridLength.Auto },
@@ -4445,58 +4665,106 @@ public partial class App : Application
                 new RowDefinition { Height = GridLength.Auto },
             },
         };
-        var heading = new TextBlock
-        {
-            Text = title,
-            FontSize = 16,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = ThemeBrush("DgpPrimaryTextBrush"),
-            TextWrapping = TextWrapping.Wrap,
-        };
-        Grid.SetRow(heading, 0);
-        content.Children.Add(heading);
-        var body = new StackPanel
-        {
-            Spacing = 10,
-            Margin = new Thickness(0, 10, 0, 0),
-        };
-        var bodyCount = children.Length > 1 ? children.Length - 1 : children.Length;
-        for (var index = 0; index < bodyCount; index++)
-        {
-            body.Children.Add(children[index]);
-        }
+        body.VerticalAlignment = VerticalAlignment.Top;
         Grid.SetRow(body, 1);
+        Grid.SetRow(footer, 2);
+        content.Children.Add(heading);
         content.Children.Add(body);
-        if (children.Length > 1)
-        {
-            var footer = new Border
-            {
-                Margin = new Thickness(0, 10, 0, 0),
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                Child = children[^1],
-            };
-            Grid.SetRow(footer, 2);
-            content.Children.Add(footer);
-        }
+        content.Children.Add(footer);
         return new Border
         {
-            Background = ThemeBrush("DgpInformationBrush"),
-            BorderBrush = ThemeBrush("DgpFineBorderBrush"),
+            Background = ThemeBrush(inputTask ? "DgpTealSurfaceBrush" : "DgpSurfaceBrush"),
+            BorderBrush = ThemeBrush("DgpDashboardLineBrush"),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(14),
+            CornerRadius = new CornerRadius(18),
+            Padding = new Thickness(24),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
             Child = content,
         };
     }
 
+    private Expander CreateDashboardExpander(string title, FrameworkElement content)
+    {
+        return new Expander
+        {
+            Header = title,
+            Content = content,
+            IsExpanded = false,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Background = ThemeBrush("DgpSurfaceBrush"),
+            BorderBrush = ThemeBrush("DgpDashboardLineBrush"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Foreground = ThemeBrush("DgpDashboardTextBrush"),
+        };
+    }
+
+    private void RevealDashboardScope()
+    {
+        if (dashboardScopeExpander is null) return;
+        dashboardScopeExpander.IsExpanded = true;
+        dashboardScopeExpander.DispatcherQueue.TryEnqueue(() =>
+            dashboardScopeExpander.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = true }));
+    }
+
+    private Button CreateDashboardShortcut(string title, string description, Symbol icon)
+    {
+        var content = new Grid
+        {
+            ColumnSpacing = 14,
+            ColumnDefinitions =
+            {
+                new ColumnDefinition { Width = GridLength.Auto },
+                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
+                new ColumnDefinition { Width = GridLength.Auto },
+            },
+        };
+        content.Children.Add(new SymbolIcon(icon)
+        {
+            Foreground = ThemeBrush("DgpMutedTextBrush"),
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        var text = new StackPanel
+        {
+            Spacing = 4,
+            Children =
+            {
+                new TextBlock { Text = title, FontSize = 16, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
+                new TextBlock
+                {
+                    Text = description, FontSize = 12, TextWrapping = TextWrapping.Wrap,
+                    Foreground = ThemeBrush("DgpDashboardMutedBrush"),
+                },
+            },
+        };
+        Grid.SetColumn(text, 1);
+        content.Children.Add(text);
+        var arrow = new FontIcon { Glyph = "\uE76C", FontSize = 12, Foreground = ThemeBrush("DgpDashboardMutedBrush") };
+        Grid.SetColumn(arrow, 2);
+        content.Children.Add(arrow);
+        var button = new Button
+        {
+            Content = content,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Background = ThemeBrush("DgpSurfaceBrush"),
+            BorderBrush = ThemeBrush("DgpDashboardLineBrush"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(18),
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, title);
+        return button;
+    }
+
     private Grid CreateBalancedDashboardColumns(
         FrameworkElement primary,
         FrameworkElement secondary,
-        double breakpoint = 760)
+        double breakpoint = 760,
+        double primaryWeight = 1)
     {
-        var primaryColumn = new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) };
+        var primaryColumn = new ColumnDefinition { Width = new GridLength(primaryWeight, GridUnitType.Star) };
         var secondaryColumn = new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) };
         var secondRow = new RowDefinition { Height = new GridLength(0) };
         var grid = new Grid
@@ -4525,7 +4793,7 @@ public partial class App : Application
 
         void ApplyLayout(bool useColumns)
         {
-            primaryColumn.Width = new GridLength(1, GridUnitType.Star);
+            primaryColumn.Width = new GridLength(useColumns ? primaryWeight : 1, GridUnitType.Star);
             secondaryColumn.Width = useColumns
                 ? new GridLength(1, GridUnitType.Star)
                 : new GridLength(0);
@@ -4591,72 +4859,6 @@ public partial class App : Application
         ApplyLayout(true);
         grid.SizeChanged += (_, args) => ApplyLayout(args.NewSize.Width >= breakpoint);
         return grid;
-    }
-
-    private Border CreateDashboardMetric(string label, FrameworkElement value)
-    {
-        return new Border
-        {
-            Background = ThemeBrush("DgpInformationBrush"),
-            BorderBrush = ThemeBrush("DgpFineBorderBrush"),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(14, 10, 14, 10),
-            Child = new StackPanel
-            {
-                Spacing = 4,
-                Children =
-                {
-                    new TextBlock
-                    {
-                        Text = label,
-                        FontSize = 12,
-                        Foreground = ThemeBrush("DgpSecondaryTextBrush"),
-                    },
-                    value,
-                },
-            },
-        };
-    }
-
-    private Grid CreateDashboardSummary(
-        TextBlock protectionState,
-        TextBlock mode,
-        TextBlock targets,
-        Button primaryAction,
-        Button pauseAction)
-    {
-        protectionState.FontSize = 16;
-        protectionState.Foreground = ThemeBrush("DgpPrimaryTextBrush");
-        var summary = new Grid
-        {
-            ColumnSpacing = 12,
-            ColumnDefinitions =
-            {
-                new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) },
-                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
-                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
-                new ColumnDefinition { Width = GridLength.Auto },
-            },
-        };
-        var protectionMetric = CreateDashboardMetric("保护状态", protectionState);
-        var modeMetric = CreateDashboardMetric("当前模式", mode);
-        var targetMetric = CreateDashboardMetric("监控目标", targets);
-        var actions = new StackPanel
-        {
-            Spacing = 8,
-            VerticalAlignment = VerticalAlignment.Center,
-            Children = { primaryAction, pauseAction },
-        };
-        Grid.SetColumn(protectionMetric, 0);
-        Grid.SetColumn(modeMetric, 1);
-        Grid.SetColumn(targetMetric, 2);
-        Grid.SetColumn(actions, 3);
-        summary.Children.Add(protectionMetric);
-        summary.Children.Add(modeMetric);
-        summary.Children.Add(targetMetric);
-        summary.Children.Add(actions);
-        return summary;
     }
 
     private Border CreateSectionCard(string title, params UIElement[] children)
@@ -4992,6 +5194,7 @@ public partial class App : Application
         void FocusDirectories()
         {
             NavigateTo("overview");
+            RevealDashboardScope();
             var firstDirectoryInput = directoryEditor.Children
                 .OfType<Grid>()
                 .Select(row => row.Children.OfType<TextBox>().FirstOrDefault())
@@ -5047,6 +5250,7 @@ public partial class App : Application
         void FocusExclusions()
         {
             NavigateTo("overview");
+            RevealDashboardScope();
             var firstExclusionInput = exclusionInputs?.Children
                 .OfType<Grid>()
                 .Select(row => row.Children.OfType<TextBox>().FirstOrDefault())

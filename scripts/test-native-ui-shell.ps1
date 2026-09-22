@@ -171,7 +171,7 @@ if (@([regex]::Matches($appCode, 'CreateSectionCard\(')).Count -lt 11) {
     throw 'Native UI must group existing content into section cards.'
 }
 if (@([regex]::Matches($appCode, 'CreateAdaptiveColumns\(')).Count -lt 7 -or
-    @([regex]::Matches($appCode, 'CreateBalancedDashboardColumns\(')).Count -lt 5) {
+    @([regex]::Matches($appCode, 'CreateBalancedDashboardColumns\(')).Count -lt 4) {
     throw 'Each navigation page must provide a wide and narrow layout, with balanced rows on the dashboard.'
 }
 $sectionCard = [regex]::Match(
@@ -248,54 +248,48 @@ foreach ($monitoringResolutionRequirement in @(
         throw "Native UI monitoring resolution status is missing: $monitoringResolutionRequirement"
     }
 }
+# Dashboard actions remain connected while configuration is progressively disclosed.
 foreach ($dashboardLayoutRequirement in @(
-    'private Border CreateDashboardCard(',
-    'private Border CreateDashboardMetric(',
-    'private Grid CreateDashboardSummary(',
-    'private Border CreateDashboardModule(',
-    'private Grid CreateBalancedDashboardColumns(',
-    'private Grid CreateBalancedDashboardTriplet(',
+    'CreateDashboardTask("电脑保护"',
+    'CreateDashboardTask("临时锁定键鼠"',
+    'CreateDashboardExpander("启动选项与采集详情"',
+    'CreateDashboardExpander("监控范围与排除规则"',
+    'CreateBalancedDashboardColumns(',
+    'IsExpanded = false',
+    'RevealDashboardScope();',
+    'dashboardScopeExpander.IsExpanded = true;',
     'Grid.SetRow(footer, 2);',
-    'CreateDashboardSummary(sessionStatus, dashboardModeSummary, dashboardTargetSummary, protectionButton, pauseProtectionButton)',
-    'CreateDashboardCard("快速操作"',
-    'CreateDashboardCard("监控范围"',
-    'CreateDashboardCard("运行信息"',
-    '"本次保护"',
-    '"临时输入控制"',
-    '"当前模式"',
-    '"监控目标"',
-    'Content = "查看模式配置"',
     'Content = "高级设置与设备"',
     'var inputManagementFlyout = new Flyout',
-    'monitoringMode.MaxWidth = 280;',
-    'sessionName.MaxWidth = 420;',
-    'protectionButton.Background = ThemeBrush("DgpBrandBrush");',
-    'startTemporaryInputControlButton.Background = ThemeBrush("DgpBrandBrush");')) {
+    'protectionButton.Click += async (_, _) => await performProtectionActionAsync();',
+    'startTemporaryInputControlButton.Click += async (_, _) => await StartTemporaryInputControlAsync();',
+    'stopTemporaryInputControlButton.Click += async (_, _) => await StopTemporaryInputControlAsync();',
+    'saveDirectoriesButton.Click += async (_, _) => await saveDirectoriesAsync();',
+    'saveExclusionsButton.Click += async (_, _) => await SaveExclusionsAsync();',
+    'Children = { sessionName, sessionStartPreviewStatus, openModeSettingsButton }',
+    'Children = { startTemporaryInputControlButton, stopTemporaryInputControlButton }',
+    'temporaryInputUnlockHint,',
+    '(historyShortcut, "history"), (auditShortcut, "audit"), (reportShortcut, "reports")')) {
     if (-not $appCode.Contains($dashboardLayoutRequirement)) {
-        throw "Native UI dashboard layout requirement is missing: $dashboardLayoutRequirement"
+        throw "Native UI dashboard action or disclosure requirement is missing: $dashboardLayoutRequirement"
     }
 }
-$dashboardCode = [regex]::Match(
-    $appCode,
-    'var overview = new StackPanel[\s\S]+?historyList = new ListView',
-    [Text.RegularExpressions.RegexOptions]::Multiline).Value
-if (-not $dashboardCode) {
-    throw 'Native UI dashboard construction block is missing.'
-}
-if ($dashboardCode.Contains('CreateAdaptiveColumns(') -or $dashboardCode.Contains('CreateSectionCard(')) {
-    throw 'Native UI dashboard must use balanced rows instead of unequal adaptive or legacy section-card columns.'
-}
-foreach ($balancedLayoutRequirement in @(
-    'new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }',
-    'VerticalAlignment = VerticalAlignment.Stretch',
-    'HorizontalAlignment = HorizontalAlignment.Stretch')) {
-    if (-not $appCode.Contains($balancedLayoutRequirement)) {
-        throw "Native UI balanced dashboard geometry is missing: $balancedLayoutRequirement"
+foreach ($focusMethod in @('FocusDirectories', 'FocusExclusions')) {
+    $focusCode = [regex]::Match($appCode, ('void ' + $focusMethod + '\(\)[\s\S]+?^        \}'),
+        [Text.RegularExpressions.RegexOptions]::Multiline).Value
+    if (-not $focusCode.Contains('RevealDashboardScope();')) {
+        throw "Menu entry must reveal its collapsed editor: $focusMethod"
     }
 }
-if ($appCode.Contains('每次启动单独选择保护模式。内置模式采用固定功能组合，自定义模式使用已保存的逐项配置。') -or
-    $appCode.Contains('仅控制本机键盘或鼠标，可单独使用，也可与审计会话并行。可按时释放，也可持续到验证解锁。服务或系统重启会安全释放。该任务不会写入保护会话的审计时间线。')) {
-    throw 'Native UI dashboard must not retain the previous long-form operational instructions.'
+if ($appCode.Contains('CreateDashboardCard("快速操作"') -or
+    $appCode.Contains('CreateDashboardCard("运行信息"')) {
+    throw 'Dashboard must not restore nested instruction cards.'
+}
+foreach ($dashboardBrush in @('DgpDashboardLineBrush', 'DgpTealSurfaceBrush', 'DgpTealBrush',
+    'DgpAmberSurfaceBrush', 'DgpErrorSurfaceBrush')) {
+    if (-not $appXaml.Contains('x:Key="' + $dashboardBrush + '"')) {
+        throw "Dashboard semantic brush is missing: $dashboardBrush"
+    }
 }
 foreach ($emptyHeartbeatRequirement in @(
     'runtime.ObservedUtc is null || runtime.ObservedUtc.Value <= DateTimeOffset.UnixEpoch',
@@ -362,4 +356,13 @@ if ($icons.Count -ne 7 -or @($icons | Select-Object -Unique).Count -ne 7) {
     throw "Expected seven distinct navigation icons; found: $($icons -join ', ')"
 }
 
-Write-Output 'Native UI shell theme, title bar, menu, and navigation icon checks passed.'
+$analysisCode = Get-Content (Join-Path $projectRoot 'native\DesktopGuardPro.Native\App.Analysis.cs') -Raw
+foreach ($requirement in @('Content = "打开会话"', 'CreateAnalysisSessionBar()', 'ResolveAnalysisSessionAsync(client)', 'OpenRiskEvidenceAsync', 'ReportSequenceRange.TryParse')) {
+    if (-not $appCode.Contains($requirement)) { throw "Cross-page session wiring missing: $requirement" }
+}
+foreach ($method in @('LoadTimelineAsync', 'LoadRiskAsync', 'LoadAssetDifferencesAsync', 'ExportReportAsync')) {
+    $body = [regex]::Match($appCode, ('private async Task ' + $method + '[\s\S]+?^    \}'), [Text.RegularExpressions.RegexOptions]::Multiline).Value
+    if (-not $body -or -not $body.Contains('ResolveAnalysisSessionAsync(client)') -or $body.Contains('health.Session.Id')) { throw "$method must query the selected history session" }
+}
+if (-not $analysisCode.Contains('analysisWorkspace.IsCurrent') -and -not $appCode.Contains('analysisWorkspace.IsCurrent')) { throw 'Missing stale response protection' }
+Write-Output 'Native UI shell and cross-page session wiring checks passed.'

@@ -192,6 +192,13 @@ func (api *API) updateDirectoryMonitoring(request contracts.Message) (contracts.
 	if activeSession != nil && isTerminal(activeSession.State) {
 		activeSession = nil
 	}
+	// A running pipeline owns a fixed scope. Do not acknowledge changes that
+	// would only take effect after a pause/resume or a subsequent session.
+	scopeUpdate := payload.MonitoringPolicy == nil && payload.ResetMonitoringMode == nil &&
+		payload.InputActivityEnabled == nil && payload.WindowTitleEnabled == nil && payload.HighRiskShortcutsEnabled == nil
+	if scopeUpdate && activeSession != nil && activeSession.State != domain.SessionStateDraft {
+		return api.errorResponse(request, ErrorCodeInvalidRequest, "请先结束当前保护，再修改监控目标或排除规则；暂停期间也不能修改范围。")
+	}
 	if payload.ResetMonitoringMode != nil {
 		profileStore, ok := api.store.(MonitoringProfileStore)
 		if !ok {

@@ -23,6 +23,15 @@
             <SolidColorBrush x:Key="DgpBorderBrush" Color="#BFD0E6" />
             <SolidColorBrush x:Key="DgpFineBorderBrush" Color="#C5D5EB" />
             <SolidColorBrush x:Key="DgpTitleBarTextBrush" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="DgpDashboardTextBrush" Color="#233448" />
+            <SolidColorBrush x:Key="DgpDashboardMutedBrush" Color="#647386" />
+            <SolidColorBrush x:Key="DgpDashboardLineBrush" Color="#DEE5EC" />
+            <SolidColorBrush x:Key="DgpTealSurfaceBrush" Color="#EFF6F4" />
+            <SolidColorBrush x:Key="DgpTealBrush" Color="#386D65" />
+            <SolidColorBrush x:Key="DgpTealSoftBrush" Color="#DFEDE7" />
+            <SolidColorBrush x:Key="DgpAmberSurfaceBrush" Color="#F7F0E3" />
+            <SolidColorBrush x:Key="DgpAmberTextBrush" Color="#83662F" />
+            <SolidColorBrush x:Key="DgpErrorSurfaceBrush" Color="#F8EDED" />
             <Style TargetType="Button">
                 <Setter Property="FontSize" Value="11.2" />
                 <Setter Property="MinHeight" Value="28.8" />
