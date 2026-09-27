@@ -4,7 +4,7 @@ param(
     [ValidatePattern('^\d+(\.\d+){1,3}$')]
     [string]$Version,
 
-    [string]$OutputDirectory = 'dist',
+    [string]$OutputDirectory = "releases\$Version",
     [string]$SignedReleaseDirectory,
     [string]$CertificateThumbprint,
     [ValidateSet('CurrentUser', 'LocalMachine')]
@@ -120,7 +120,7 @@ try {
         $completedSteps.Add('signed_inputs_copied_without_rebuild')
     }
     else {
-        & go run ./cmd/desktop-guard-release --version $Version --output $buildRoot
+        & go -C backend run ./cmd/desktop-guard-release --version $Version --output $buildRoot
         if ($LASTEXITCODE -ne 0) { throw "Release build failed with exit code $LASTEXITCODE." }
         $completedSteps.Add('components_built')
         foreach ($name in $componentNames) { Invoke-ReleaseSigning (Join-Path $releaseDirectory $name) }
@@ -128,7 +128,7 @@ try {
     foreach ($name in $componentNames) { Assert-ReleaseSignature (Join-Path $releaseDirectory $name) }
     $completedSteps.Add('component_signatures_verified')
 
-    & go run ./cmd/desktop-guard-release --version $Version --finalize $releaseDirectory
+    & go -C backend run ./cmd/desktop-guard-release --version $Version --finalize $releaseDirectory
     if ($LASTEXITCODE -ne 0) { throw 'Signed release finalization failed.' }
     $manifest = Get-Content -LiteralPath (Join-Path $releaseDirectory 'release-manifest.json') -Raw | ConvertFrom-Json
     if ($manifest.signingRequired -ne $false -or $manifest.components.Count -ne 4 -or $manifest.productVersion -ne $Version) {

@@ -4,29 +4,40 @@ Desktop Guard Pro 是面向 Windows x64 的本机保护与审计应用。它通�
 用户会话代理、原生桌面界面和维护程序，记录保护期间的文件、进程、软件、设备、
 账户和系统配置变化，并提供风险分析、完整性校验和报告导出。
 
-本文按 2026 年 9 月 22 日的工作区源码和 `2.11.38` 发布物核对。当前安装包使用
-测试代码签名证书，适合开发、测试和验收环境。
+本文按 2026 年 9 月 27 日的 `2.11.39` 源码和发布物核对。
+当前四个程序及安装包的签名者为 `Raymond`。
+
+详细的设计意图、进程架构、七页按钮与接口、配置生效条件和使用流程图，见
+[技术架构与完整操作说明](docs/technical-architecture.md)。
+
+开发定位见 [项目上下文](PROJECT_CONTEXT.md)、[项目状态](PROJECT_STATUS.md)、
+[前端说明](docs/context/frontend.md) 和 [后端说明](docs/context/backend.md)。
+工作区检查结果统一保存在 [最新验证记录](docs/verification/current.md)。
 
 ## 当前版本
 
-当前发布版本为 `2.11.38`，安装包位于项目的 `dist/releases` 目录。本版直接复用
-DeskGuard 的键鼠钩子、解锁状态机、密码窗口和输入法处理，接通此前保存的本地
-密码与恢复码，并保留七个页面的统一设计及会话关联。
-发布目录保存安装包、构建回执和源码包；历史版本也可从 GitHub Releases 获取。
+当前发布版本为 `2.11.39`，安装包位于项目的 `releases/2.11.39` 目录。本版修复
+键鼠回调指针问题，将 Go 后台和原生界面分别整理到 `backend/` 与 `frontend/`，
+更新构建路径，并使用 Raymond 证书签名。七页原生界面及已保存凭据保持兼容。
+发布目录保留最新安装包、构建回执和对应源码包；历史版本从 GitHub Releases 获取。
 
 - 安装包：
-  [`DesktopGuardPro-2.11.38-windows-amd64.msi`](dist/releases/DesktopGuardPro-2.11.38-windows-amd64.msi)
+  [`DesktopGuardPro-2.11.39-windows-amd64.msi`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.39/DesktopGuardPro-2.11.39-windows-amd64.msi)
 - 构建回执：
-  [`DesktopGuardPro-2.11.38-windows-amd64.msi.build.json`](dist/releases/DesktopGuardPro-2.11.38-windows-amd64.msi.build.json)
-- 发布说明：[2.11.38](RELEASE_NOTES-2.11.38.md)
-- 下载页面：[GitHub Release](https://github.com/ra0811x/DesktopGuardPro/releases/tag/v2.11.38)
+  [`DesktopGuardPro-2.11.39-windows-amd64.msi.build.json`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.39/DesktopGuardPro-2.11.39-windows-amd64.msi.build.json)
+- 对应发布源码：
+  [`DesktopGuardPro-2.11.39-source.zip`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.39/DesktopGuardPro-2.11.39-source.zip)
+- 公开证书：[`Raymond-code-signing.cer`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.39/Raymond-code-signing.cer)
+- 文件校验：[`SHA256SUMS.txt`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.39/SHA256SUMS.txt)
+- 发布说明：[2.11.39](docs/releases/2.11.39.md)
+- 下载页面：[GitHub Release](https://github.com/ra0811x/DesktopGuardPro/releases/tag/v2.11.39)
 - SHA-256：
-  `871D056E743AD3D78BC40E0DE60E91D3D5A881E49131FC827AAD8776C8C764B8`
-- 签名者：`CN=Desktop Guard Pro Test Signing`
-- 证书指纹：`E20E6C2B305777D52341C14E2DC67E0A2E1522FD`
+  `C1CF82F615810466CD6A138660EEDF35C288AF01EEFBAC2E1D9E2D0C9EE7CE0C`
+- 签名者：`CN=Raymond`
+- 证书指纹：`DC38087948CDD021FD794F0D7B6B4F5A12345AEE`
 
-> **Warning:** 测试证书可能未被其他计算机信任。面向生产环境分发时，必须使用
-> 目标环境信任的代码签名证书重新构建安装包。
+旧测试签名版本无法直接原位升级到本版，保留数据卸载仍会保留旧安装清单。
+安装兼容范围见 [发布说明](docs/releases/2.11.39.md)。
 
 ## 产品能力
 
@@ -76,14 +87,14 @@ DeskGuard 的键鼠钩子、解锁状态机、密码窗口和输入法处理，�
 软件名称，第二行显示菜单、服务状态和保护状态。窗口使用 Per-Monitor V2 DPI
 感知，并在较窄窗口中自动收束导航和双栏内容。
 
-仪表盘按照 **保护概览**、**快速操作**、**监控范围** 和 **运行信息** 四个横向
-区块排列。同排模块保持等宽、等高和统一内边距，底部操作按钮使用同一基线。
-模式与会话名称、键盘与鼠标控制均采用紧凑双列；低频输入管理功能集中在
-**高级设置与设备** 浮层。浮层将操作分成 **控制与设备** 和 **本地凭据** 两组，
-采用等宽按钮并关闭横向滚动，缩放窗口时仍能保持清晰间距。
+仪表盘以 **电脑保护** 和 **临时锁定键鼠** 两张主任务卡组织高频操作；会话名称、
+采集详情、监控范围和服务信息放在可展开区域，下方提供历史、审计与导出快捷入口。
+临时控制统一锁定本地键盘和鼠标，规则、设备状态与密码管理集中在
+**高级设置与设备** 浮层。其余六页沿用统一的卡片、工具栏和详情区设计，
+审计、风险、资产和报告共享所选会话。
 
-顶部菜单包含 **文件**、**编辑**、**查看** 和 **设置**。菜单提供保护操作、
-页面跳转、监控配置、隐私选项、刷新和导航栏控制。应用图标用于窗口、安装程序、
+顶部菜单包含 **文件**、**编辑**、**查看** 和 **设置**。菜单提供页面跳转、
+监控配置、隐私设置入口、刷新和导航栏控制。应用图标用于窗口、安装程序、
 桌面快捷方式和系统托盘。
 
 ## 保护会话流程
@@ -131,7 +142,7 @@ Ctrl+Alt+Delete 的安全桌面。
 服务或系统重启后不会自动重新锁定。
 
 钩子引擎、解锁状态机、密码窗口及输入法处理复用 DeskGuard 源码，位于
-`internal/deskguard`。服务适配层沿用本项目的凭据存储，兼容此前保存的密码。
+`backend/internal/deskguard`。服务适配层沿用本项目的凭据存储，兼容此前保存的密码。
 
 临时输入控制可以在没有保护会话时运行，不会自动启动文件、网络、USB 或用户活动
 审计。它与保护会话并行时，两条生命周期彼此独立。临时控制运行期间，用户会话
@@ -200,8 +211,8 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 1. 结束正在进行的保护会话。
 2. 关闭 Desktop Guard Pro 主窗口。
 3. 打开
-   [`DesktopGuardPro-2.11.38-windows-amd64.msi`](dist/releases/DesktopGuardPro-2.11.38-windows-amd64.msi)。
-4. 确认管理员权限和测试发布者提示。
+   [`DesktopGuardPro-2.11.39-windows-amd64.msi`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.39/DesktopGuardPro-2.11.39-windows-amd64.msi)。
+4. 确认管理员权限和 Raymond 发布者信息。
 5. 选择安装目录和桌面快捷方式选项。
 6. 等待服务安装、启动和健康检查完成。
 7. 启动 Desktop Guard Pro，确认顶部显示 **服务：运行中**。
@@ -221,36 +232,31 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 | `desktop-guard-ui.exe` | WinUI 3 原生桌面界面。 |
 | `desktop-guard-agent.exe` | 用户会话代理和输入活动汇总。 |
 | `desktop-guard-maintenance.exe` | 安装、升级、卸载、验证和诊断。 |
-| `native/DesktopGuardPro.Native/` | WinUI 界面、清单和主题资源。 |
-| `internal/` | 领域模型、采集器、IPC、存储、报告和 Windows 集成。 |
-| `cmd/` | 四个程序及发布工具的 Go 入口。 |
+| `frontend/DesktopGuardPro.Native/` | WinUI 界面、清单和主题资源。 |
+| `backend/internal/` | 领域模型、采集器、IPC、存储、报告和 Windows 集成。 |
+| `backend/cmd/` | 三个 Go 程序和发布工具入口。 |
 | `installer/` | WiX MSI 产品定义。 |
 | `scripts/` | 发布、签名和安装包检查脚本。 |
-| `frontend/` | 保留的 Vue 界面和前端自动化测试。 |
-| `docs/` | 功能需求验收矩阵。 |
+| `frontend/` | WinUI 3 原生界面及状态回归工程。 |
+| `docs/` | 模块说明、架构操作、需求验收、发布说明和最新验证记录。 |
 | `assets/` | 应用图标和品牌资源。 |
-| `dist/releases/` | 当前 MSI、构建回执和历史版本归档。 |
+| `releases/2.11.39/` | 当前 MSI、构建回执、对应源码包、公开证书和校验清单。 |
 
 当前发布流程从
-`native/DesktopGuardPro.Native/DesktopGuardPro.Native.csproj` 生成桌面界面。
-`frontend/` 和 `cmd/desktop-guard-ui/` 保留用于兼容与自动化验证，不会作为
-`2.11.38` MSI 的主界面载入。
+`frontend/DesktopGuardPro.Native/DesktopGuardPro.Native.csproj` 生成桌面界面。
+已退出发布链的 Vue/Wails 界面已删除；维护程序仍使用的共享模块保留。
 
 ## 开发环境
 
-完整构建需要 Windows x64 环境和以下工具链。NuGet、Go 和 npm 依赖需要在首次
+完整构建需要 Windows x64 环境和以下工具链。NuGet 和 Go 依赖需要在首次
 构建时可用。
 
-- Go 1.26.0；`go.mod` 指定 Go 1.26.6 工具链。
+- Go 1.26.0；`backend/go.mod` 指定 Go 1.26.6 工具链。
 - .NET 8 SDK。
 - Windows App SDK `1.8.260508005`。
 - Windows SDK BuildTools `10.0.26100.7705`。
 - WiX Toolset 3.14。
 - Windows SDK `signtool.exe` 和 `mt.exe`。
-- Node.js 22.12.0 或更高版本。
-- npm 10.0.0 或更高版本。
-- Vue 3.5.41、TypeScript 5.9.3、Vite 8.2.2 和 Vitest 4.1.11。
-- Wails 3.0.0-beta.14，用于保留的 Wails 界面代码。
 
 ## 构建
 
@@ -260,16 +266,16 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 构建 Go 组件和发布目录：
 
 ```powershell
-go run ./cmd/desktop-guard-release `
-  --version 2.11.38 `
-  --output dist\staging
+go -C backend run ./cmd/desktop-guard-release `
+  --version 2.11.39 `
+  --output ../dist/staging
 ```
 
 单独构建 WinUI 3 原生界面：
 
 ```powershell
 dotnet build `
-  native\DesktopGuardPro.Native\DesktopGuardPro.Native.csproj `
+  frontend\DesktopGuardPro.Native\DesktopGuardPro.Native.csproj `
   -c Release `
   -p:Platform=x64
 ```
@@ -278,9 +284,9 @@ dotnet build `
 
 ```powershell
 $msiArguments = @{
-  Version = '2.11.38'
-  OutputDirectory = 'dist\releases'
-  CertificateStore = 'LocalMachine'
+  Version = '2.11.39'
+  OutputDirectory = 'releases\2.11.39'
+  CertificateStore = 'CurrentUser'
   CertificateThumbprint = '<certificate-thumbprint>'
 }
 .\scripts\build-msi.ps1 @msiArguments
@@ -292,15 +298,15 @@ WiX 链接、MSI 签名和构建回执写入。目标 MSI 已存在时，脚本�
 
 ## 测试
 
-后端、原生界面、保留的 Vue 界面和安装包都有独立测试入口。以下命令从项目根目录
+后端、原生界面和安装包都有独立测试入口。以下命令从项目根目录
 执行。
 
 运行 Go 检查：
 
 ```powershell
-go mod verify
-go test ./...
-go vet ./...
+go -C backend mod verify
+go -C backend test ./...
+go -C backend vet ./...
 ```
 
 运行原生界面结构、清单和启动检查：
@@ -310,19 +316,16 @@ go vet ./...
 
 $nativeUiTest = @{
   ExecutablePath = `
-    'dist\staging\DesktopGuardPro-2.11.38-windows-amd64\desktop-guard-ui.exe'
-  ExpectedVersion = '2.11.38'
+    'dist\staging\DesktopGuardPro-2.11.39-windows-amd64\desktop-guard-ui.exe'
+  ExpectedVersion = '2.11.39'
 }
 .\scripts\test-native-ui-release.ps1 @nativeUiTest
 ```
 
-运行保留的 Vue 界面检查：
+运行原生状态检查：
 
 ```powershell
-npm --prefix frontend install
-npm --prefix frontend run typecheck
-npm --prefix frontend test
-npm --prefix frontend run build
+dotnet run --project frontend/DesktopGuardPro.Native.Tests -c Release
 ```
 
 运行 MSI 发布检查：
@@ -337,14 +340,13 @@ npm --prefix frontend run build
 
 ```powershell
 $env:DGP_STORAGE_SCALE_TEST = '1'
-go test ./internal/storage -run TestStorageScale -count=1
+go -C backend test ./internal/storage -run TestStorageScale -count=1
 Remove-Item Env:DGP_STORAGE_SCALE_TEST
 ```
 
-`2.11.38` 的代理、服务、DeskGuard 钩子、原生状态回归和 Release 构建通过；
-服务与钩子的 Go race 检查通过。已运行代理占用全局互斥锁，因此代理全包测试
-跳过该互斥用例。真实密码窗口通过正确密码、输错后重试、取消、到期关闭和
-错误提示期间到期关闭五项检查；检查使用测试密码，未锁定真实键鼠。
+`2.11.39` 的 Go 全量测试、vet、DeskGuard callback 指针检查、钩子/代理/服务
+race、原生状态和界面结构、Release 构建通过。键鼠回归使用模拟回调，
+未启用真实键鼠钩子。本轮未重新执行真实密码窗口交互或界面启动探测。
 发布包经过 MSI 门禁、WiX/ICE、四个组件与 MSI 签名、产品版本和构建回执
 SHA-256 核对。目标设备安装升级及真实键鼠锁定、远程输入仍待实机验收。
 
@@ -363,7 +365,7 @@ SHA-256 核对。目标设备安装升级及真实键鼠锁定、远程输入仍
   代理会保留当前钩子，直到连接恢复并读取到任务停止或到期状态。
 - Windows 10 1809、Windows 11、睡眠恢复、磁盘满、设备拔除和安全日志清理仍需
   在目标设备执行发布门槛验证。
-- 临时测试证书未被所有设备信任。生产分发必须替换为可信代码签名证书。
+- 已安装的旧测试签名版本与当前 Raymond 签名不同，发布者一致性门禁会拒绝原位升级。
 
 ## 第三方许可
 

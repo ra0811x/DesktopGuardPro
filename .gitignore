@@ -1,4 +1,4 @@
-# Go build and test output
+# Reproducible build and test output
 /bin/
 /build/bin/
 **/bin/
@@ -7,15 +7,9 @@
 *.test
 coverage.out
 
-# Wails and frontend output
-/.wails/
-/frontend/dist/
-/frontend/node_modules/
-/frontend/.vite/
-/frontend/coverage/
-
 # Release and packaging output
 /dist/
+/releases/
 *.msi
 *.zip
 

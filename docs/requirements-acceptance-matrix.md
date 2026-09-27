@@ -5,9 +5,14 @@
 本版加入 DeskGuard 临时键鼠控制。安装后生效，发布过程不会自动替换已安装服务。
 原“72/72 全部完成”结论已撤回；未执行的目标设备场景仍待验收。
 
+2026 年 9 月 27 日目录按 `backend/`、`frontend/`、`docs/` 和 `releases/` 整理。
+`2.11.39` 包含指针修复、目录迁移与 Raymond 签名，验证见
+[最新验证记录](verification/current.md) 和 [2.11.39 发布说明](releases/2.11.39.md)。
+本矩阵中的 2.11.38 记录仍描述该版本发布包的验证范围。
+
 ## 2.11.38 临时键鼠控制
 
-以下记录对应本次正式发布的实现与验证范围。
+以下记录对应 2.11.38 发布时的实现与验证范围。
 
 | 项目 | 实现 | 验证 |
 | --- | --- | --- |
@@ -54,15 +59,15 @@
 
 后端通过与原生桌面验收分别记录，避免将单元测试视为完整交付证明。
 
-- 六个后端包禁用缓存回归通过：`internal/service`、`internal/storage`、
-  `internal/risk`、`internal/reporting`、`internal/collector`、`cmd/desktop-guard-service`。
+- 六个后端包禁用缓存回归通过：`backend/internal/service`、`backend/internal/storage`、
+  `backend/internal/risk`、`backend/internal/reporting`、`backend/internal/collector`、`backend/cmd/desktop-guard-service`。
   Windows 沙箱限制路径解析，相关测试在沙箱外、隔离临时数据库中执行。
 - `TestAuditEndBaselineAfterPause` 修复前“暂停后结束”子用例失败，修复后两条路径通过。
   `TestSessionControllerWaitForStoppedWaitsForEndBaselineWithoutPipeline` 验证收尾等待和去重。
   采集生命周期相关用例的 Go race 检测通过。
 - `TestHistoricalSessionAnalysisAfterRestartWithAnotherCurrentSession` 验证 A 完成、重启、
   创建 B 后，历史列表、审计、风险、资产查询与范围报告仍能明确查询 A。
-- `dotnet run --project native/DesktopGuardPro.Native.Tests -c Release` 验证所选会话、
+- `dotnet run --project frontend/DesktopGuardPro.Native.Tests -c Release` 验证所选会话、
   A-B-A 旧请求隔离、分页条件改变、报告范围及模式草稿。
 - `scripts/test-native-ui-shell.ps1` 通过；WinUI Release 编译通过。
 - 真实预览窗口显示正常；跨页自动化连续遭遇最小化与窗口位置变化，已停止操作。
@@ -72,13 +77,13 @@
 
 修复逻辑集中在下列现有模块与小型原生状态辅助类中。
 
-- [原生页面](../native/DesktopGuardPro.Native/App.xaml.cs)、
-  [跨页会话交互](../native/DesktopGuardPro.Native/App.Analysis.cs)、
-  [会话、分页、范围与草稿状态](../native/DesktopGuardPro.Native/AnalysisWorkspace.cs)。
-- [采集生命周期](../internal/collector/session_controller.go)、
-  [范围更新](../internal/service/directory_monitoring.go)。
-- [原生状态回归](../native/DesktopGuardPro.Native.Tests/Program.cs)、
-  [服务集成测试](../cmd/desktop-guard-service/runtime_test.go)。
+- [原生页面](../frontend/DesktopGuardPro.Native/App.xaml.cs)、
+  [跨页会话交互](../frontend/DesktopGuardPro.Native/App.Analysis.cs)、
+  [会话、分页、范围与草稿状态](../frontend/DesktopGuardPro.Native/AnalysisWorkspace.cs)。
+- [采集生命周期](../backend/internal/collector/session_controller.go)、
+  [范围更新](../backend/internal/service/directory_monitoring.go)。
+- [原生状态回归](../frontend/DesktopGuardPro.Native.Tests/Program.cs)、
+  [服务集成测试](../backend/cmd/desktop-guard-service/runtime_test.go)。
 
 ## 状态标记
 

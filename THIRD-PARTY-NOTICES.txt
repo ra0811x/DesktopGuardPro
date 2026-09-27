@@ -1,58 +1,22 @@
 Desktop Guard Pro Third-Party Software Notices
 
-This product contains third-party software in its Windows executables and
-compiled Web assets. This notice reflects the production dependency closure
-used by the 1.0.10 release.
-
-Vue.js 3.5.41
-https://github.com/vuejs/core
-
-The MIT License (MIT)
-
-Copyright (c) 2018-present, Yuxi (Evan) You
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
+This notice describes the current Go source dependencies and reused code.
+The native desktop application uses .NET 8 and Microsoft Windows App SDK;
+their distributions retain the applicable Microsoft license files.
+The preserved 2.11.38 release retains its original embedded notices.
 
 Go production dependency inventory
 ==================================
 
-The four Windows programs distributed with Desktop Guard Pro use the Go
+The three Go Windows programs distributed with Desktop Guard Pro use the Go
 modules listed below. Build-only and test-only modules are excluded.
 
 MIT-licensed modules
 --------------------
 
-github.com/adrg/xdg v0.5.3
-https://github.com/adrg/xdg
-Copyright (c) 2014 Adrian-George Bostan <adrg@epistack.com>
-
 github.com/dustin/go-humanize v1.0.1
 https://github.com/dustin/go-humanize
 Copyright (c) 2005-2008 Dustin Sallings <dustin@spy.net>
-
-github.com/go-ole/go-ole v1.3.0
-https://github.com/go-ole/go-ole
-Copyright (c) 2013-2017 Yasuhiro Matsumoto <mattn.jp@gmail.com>
-
-github.com/mattn/go-colorable v0.1.14
-https://github.com/mattn/go-colorable
-Copyright (c) 2016 Yasuhiro Matsumoto
 
 github.com/mattn/go-isatty v0.0.24
 https://github.com/mattn/go-isatty
@@ -65,9 +29,6 @@ Copyright (c) 2015 Microsoft
 github.com/ncruces/go-strftime v1.0.0
 https://github.com/ncruces/go-strftime
 Copyright (c) 2022 Nuno Cruces
-
-The Wails module used by the Go programs is covered by the Wails Runtime
-notice above.
 
 The following MIT license applies to the modules listed in this section:
 
@@ -228,7 +189,8 @@ Source revision: ee5aecdc91450dca44847ba05e72f4b8039ad8cd
 Reused files: internal/hook/hook_windows.go, tap_windows_test.go,
 describe_windows_test.go, internal/gui/ime_windows.go, and the passwordDialog,
 prepDialog and centerTopmost functions from internal/gui/gui_windows.go.
-Located in internal/deskguard. The hook engine is copied unchanged; the dialog
+Located in backend/internal/deskguard. Hook callback pointer types are adapted;
+the dialog
 adapts the package, window owner, credential provider and control-lifetime
 cancellation.
 
@@ -269,28 +231,3 @@ gopkg.in/Knetic/govaluate.v3 v3.0.0
 Copyright (c) 2014-2016 George Lester
 
 The govaluate material is available under the MIT license reproduced above.
-
-Wails Runtime 3.0.0-beta.12
-https://github.com/wailsapp/wails
-
-MIT License
-
-Copyright (c) 2018-Present Lea Anthony
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.

@@ -4,11 +4,11 @@ param()
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$appXamlPath = Join-Path $projectRoot 'native\DesktopGuardPro.Native\App.xaml'
-$appCodePath = Join-Path $projectRoot 'native\DesktopGuardPro.Native\App.xaml.cs'
-$credentialPromptPath = Join-Path $projectRoot 'native\DesktopGuardPro.Native\WindowsCredentialPrompt.cs'
-$projectPath = Join-Path $projectRoot 'native\DesktopGuardPro.Native\DesktopGuardPro.Native.csproj'
-$manifestPath = Join-Path $projectRoot 'native\DesktopGuardPro.Native\app.manifest'
+$appXamlPath = Join-Path $projectRoot 'frontend\DesktopGuardPro.Native\App.xaml'
+$appCodePath = Join-Path $projectRoot 'frontend\DesktopGuardPro.Native\App.xaml.cs'
+$credentialPromptPath = Join-Path $projectRoot 'frontend\DesktopGuardPro.Native\WindowsCredentialPrompt.cs'
+$projectPath = Join-Path $projectRoot 'frontend\DesktopGuardPro.Native\DesktopGuardPro.Native.csproj'
+$manifestPath = Join-Path $projectRoot 'frontend\DesktopGuardPro.Native\app.manifest'
 $brandImagePath = Join-Path $projectRoot 'assets\desktop-guard-pro.png'
 $appXaml = Get-Content -LiteralPath $appXamlPath -Raw
 $appCode = Get-Content -LiteralPath $appCodePath -Raw
@@ -371,7 +371,7 @@ if ($icons.Count -ne 7 -or @($icons | Select-Object -Unique).Count -ne 7) {
     throw "Expected seven distinct navigation icons; found: $($icons -join ', ')"
 }
 
-$analysisCode = Get-Content (Join-Path $projectRoot 'native\DesktopGuardPro.Native\App.Analysis.cs') -Raw
+$analysisCode = Get-Content (Join-Path $projectRoot 'frontend\DesktopGuardPro.Native\App.Analysis.cs') -Raw
 foreach ($requirement in @('CreateWorkspaceButton("打开会话", true)', 'CreateAnalysisSessionBar(', 'ResolveAnalysisSessionAsync(client)', 'OpenRiskEvidenceAsync', 'ReportSequenceRange.TryParse')) {
     if (-not $appCode.Contains($requirement)) { throw "Cross-page session wiring missing: $requirement" }
 }
