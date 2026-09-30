@@ -50,3 +50,6 @@ dotnet build frontend/DesktopGuardPro.Native/DesktopGuardPro.Native.csproj `
 覆盖历史选择、旧响应、分页、报告区间、模式草稿和 DeskGuard 输入策略。
 `test-native-ui-release.ps1` 是会启动真实界面的发布检查，需显式传入可执行文件。
 窗口、保存对话框和实际键鼠控制仍以目标设备验收为准。
+
+2.11.41 的临时控制提示与钩子行为一致：验证窗口打开时只允许密码框接收键盘，
+取消后恢复锁定，成功后等待代理完成钩子停止确认。

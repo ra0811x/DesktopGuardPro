@@ -41,7 +41,7 @@
 go -C backend test ./... -count=1 -timeout=120s
 go -C backend vet ./...
 go -C backend run ./cmd/desktop-guard-release `
-  --version 2.11.40 --output ../dist/staging
+  --version 2.11.41 --output ../dist/staging
 ```
 
 单个包回归示例：
@@ -58,3 +58,7 @@ go -C backend test ./cmd/desktop-guard-release -count=1
 2.11.40 的 MSI 事务允许指定旧测试证书单向迁移到当前 Raymond 证书。
 迁移规则位于 `maintenance/msi_transaction_windows.go`，并保留所有者、活动会话、
 事务内签名者、备份和回滚检查。
+
+2.11.41 的 DeskGuard 验证态只向获得前台焦点的密码框放行受限键盘输入，
+并阻断所有鼠标及桌面快捷键。临时控制验证成功后，服务保留 stopping 状态，
+直到代理卸载钩子并确认停止。

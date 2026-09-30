@@ -1187,6 +1187,50 @@ func TestAPIRejectsStaleTemporaryInputControlVerification(t *testing.T) {
 	}
 }
 
+func TestAPITemporaryUnlockWaitsForAgentStopAcknowledgement(t *testing.T) {
+	now := time.Date(2026, time.September, 30, 12, 0, 0, 0, time.UTC)
+	api := newAPIWithClock(NewCoordinator(), func() time.Time { return now })
+	api.authorizedUserSID = "owner"
+	api.newChallenge = func() (string, error) { return "unlock-task", nil }
+	api.SetAgentExecutable(`C:\Program Files\DesktopGuardPro\desktop-guard-agent.exe`)
+	credentials := testInputShieldCredentialManager(&memoryInputShieldCredentialStore{}, &now)
+	if _, err := credentials.SetPassword(context.Background(), []byte("correct-password"), false); err != nil {
+		t.Fatal(err)
+	}
+	api.SetInputShieldCredentialManager(credentials)
+	policy := domain.DefaultMonitoringPolicy().InputShield
+	policy.CredentialMode = domain.InputShieldCredentialLocal
+	owner := ClientIdentity{UserSID: "owner", WindowsSessionID: 2}
+	if _, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputControlStart, now,
+		InputControlStartRequest{Policy: policy, Indefinite: true}), owner); err != nil {
+		t.Fatal(err)
+	}
+	verified, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeInputShieldCredentialVerify, now,
+		InputShieldCredentialVerifyRequest{ControlID: "unlock-task", Password: []byte("correct-password")}), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result InputShieldCredentialResult
+	decodeTestPayload(t, verified, &result)
+	if !result.Verified {
+		t.Fatalf("verify result = %+v", result)
+	}
+	stopping := api.currentInputControlFor(owner.Principal())
+	if stopping.Enabled || stopping.State != "stopping" || stopping.ControlID != "unlock-task" {
+		t.Fatalf("verified control cleared before hook stop acknowledgement: %+v", stopping)
+	}
+	agent := ClientIdentity{UserSID: "owner", WindowsSessionID: 2,
+		ImagePath: `C:\Program Files\DesktopGuardPro\desktop-guard-agent.exe`}
+	acknowledged, err := api.HandleForClient(newTestMessage(t, contracts.MessageTypeAgentInputShieldReport, now,
+		AgentInputShieldReportRequest{SessionID: "unlock-task", Action: "stopped", State: "disabled", ObservedUTC: now}), agent)
+	if err != nil || acknowledged.Type != contracts.MessageTypeAgentInputShieldResult {
+		t.Fatalf("stop acknowledgement = %+v, error = %v", acknowledged, err)
+	}
+	if current := api.currentInputControlFor(owner.Principal()); current.Enabled || current.ControlID != "" {
+		t.Fatalf("acknowledged control was not cleared: %+v", current)
+	}
+}
+
 func TestAPITemporaryUnlockAcceptsSavedPasswordOrRecoveryInOneField(t *testing.T) {
 	for _, useRecovery := range []bool{false, true} {
 		t.Run(fmt.Sprintf("recovery=%v", useRecovery), func(t *testing.T) {

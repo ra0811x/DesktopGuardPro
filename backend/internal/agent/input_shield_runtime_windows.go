@@ -174,14 +174,17 @@ func (runtime *windowsInputShieldRuntime) Run(ctx context.Context) error {
 				runtime.verificationCancel = nil
 			}
 			runtime.engine.CompleteVerification(success)
-			action := "unlock_succeeded"
-			if !success {
-				action = "unlock_failed"
-				if runtime.overlay != nil {
-					runtime.overlay.Show("本地输入防护验证失败，保护仍然有效。", 5*time.Second)
-				}
+			if success {
+				// Credential verification moves the temporary control to stopping.
+				// Remove the hooks now and acknowledge that transition before the
+				// service clears the task.
+				runtime.stopComponents(ctx, true)
+				continue
 			}
-			runtime.report(ctx, action, nil, nil)
+			if runtime.overlay != nil {
+				runtime.overlay.Show("本地输入防护验证失败，保护仍然有效。", 5*time.Second)
+			}
+			runtime.report(ctx, "unlock_failed", nil, nil)
 		case event := <-deviceEvents:
 			if runtime.active {
 				runtime.handleDeviceChange(ctx, event)

@@ -148,9 +148,10 @@ func TestWindowsInputShieldRuntimeVerifiesUnlockAsynchronously(t *testing.T) {
 	waitForInputShieldReport(t, client, "started")
 	engine.state = inputShieldVerifying
 	engine.unlock <- struct{}{}
-	waitForInputShieldReport(t, client, "unlock_succeeded")
-	if engine.state != inputShieldSuspended || client.verifyCalls != 1 {
-		t.Fatalf("unlock state = %d, verify calls = %d", engine.state, client.verifyCalls)
+	waitForInputShieldReport(t, client, "stopped")
+	if !engine.stopped || engine.state != inputShieldDisabled || client.verifyCalls != 1 {
+		t.Fatalf("unlock stopped = %v, state = %d, verify calls = %d",
+			engine.stopped, engine.state, client.verifyCalls)
 	}
 	cancel()
 	if err := <-done; err != nil {

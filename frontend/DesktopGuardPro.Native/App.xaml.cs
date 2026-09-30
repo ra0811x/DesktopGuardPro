@@ -977,7 +977,7 @@ public partial class App : Application
     private void UpdateTemporaryInputUnlockHints()
     {
         var instruction = InputShieldUnlockInstruction(TemporaryInputPolicy());
-        var hint = $"可{instruction} 呼出密码窗口；验证期间键鼠可用，取消后继续锁定。";
+        var hint = $"可{instruction} 呼出密码窗口；验证时仅密码框接收键盘，取消后继续锁定。";
         if (inputShieldUnlockHint is not null) inputShieldUnlockHint.Text = hint;
         if (temporaryInputUnlockHint is not null)
         {

@@ -1744,9 +1744,10 @@ func (api *API) inputShieldVerificationSucceeded(
 			api.agentMutex.Unlock()
 			return api.errorResponse(request, ErrorCodeInputShieldUnavailable, "input control changed before verification completed")
 		}
-		api.inputControl = InputControlResult{}
+		api.inputControl.Enabled = false
+		api.inputControl.State = "stopping"
+		api.inputControl.UnlockRequested = false
 		api.inputShieldStatus = InputShieldStatusResult{}
-		api.inputControlOwner = ""
 		api.inputShieldStatusOwner = ""
 		api.agentMutex.Unlock()
 		return api.response(request, contracts.MessageTypeInputShieldCredentialResult, InputShieldCredentialResult{Verified: true})

@@ -4,7 +4,7 @@ Desktop Guard Pro 是面向 Windows x64 的本机保护与审计应用。它通�
 用户会话代理、原生桌面界面和维护程序，记录保护期间的文件、进程、软件、设备、
 账户和系统配置变化，并提供风险分析、完整性校验和报告导出。
 
-本文按 2026 年 9 月 30 日的 `2.11.40` 源码和发布物核对。
+本文按 2026 年 9 月 30 日发布的 `2.11.41` 和源码核对。
 当前四个程序及安装包的签名者为 `Raymond`。
 
 详细的设计意图、进程架构、七页按钮与接口、配置生效条件和使用流程图，见
@@ -16,28 +16,26 @@ Desktop Guard Pro 是面向 Windows x64 的本机保护与审计应用。它通�
 
 ## 当前版本
 
-当前发布版本为 `2.11.40`，安装包位于项目的 `releases/2.11.40` 目录。本版支持
-指定旧测试证书到 Raymond 证书的 MSI 迁移，解决保留旧数据时的发布者拒绝，
-保留所有者、会话、签名和回滚检查。七页原生界面及已保存凭据保持兼容。
-2.11.40 已发布到 GitHub；以前版本的原始发布文件保持不变。
+当前版本为 `2.11.41`，安装包位于 `releases/2.11.41`。本版修复解锁热键状态
+切换、密码窗口输入隔离和验证成功后的钩子停止确认。历史发布文件保持不变。
 
 - 安装包：
-  [`DesktopGuardPro-2.11.40-windows-amd64.msi`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.40/DesktopGuardPro-2.11.40-windows-amd64.msi)
+  [`DesktopGuardPro-2.11.41-windows-amd64.msi`](releases/2.11.41/DesktopGuardPro-2.11.41-windows-amd64.msi)
 - 构建回执：
-  [`DesktopGuardPro-2.11.40-windows-amd64.msi.build.json`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.40/DesktopGuardPro-2.11.40-windows-amd64.msi.build.json)
+  [`DesktopGuardPro-2.11.41-windows-amd64.msi.build.json`](releases/2.11.41/DesktopGuardPro-2.11.41-windows-amd64.msi.build.json)
 - 对应发布源码：
-  [`DesktopGuardPro-2.11.40-source.zip`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.40/DesktopGuardPro-2.11.40-source.zip)
-- 公开证书：[`Raymond-code-signing.cer`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.40/Raymond-code-signing.cer)
-- 文件校验：[`SHA256SUMS.txt`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.40/SHA256SUMS.txt)
-- 发布说明：[2.11.40](docs/releases/2.11.40.md)
-- 下载页面：[GitHub Release](https://github.com/ra0811x/DesktopGuardPro/releases/tag/v2.11.40)
+  [`DesktopGuardPro-2.11.41-source.zip`](releases/2.11.41/DesktopGuardPro-2.11.41-source.zip)
+- 公开证书：[`Raymond-code-signing.cer`](releases/2.11.41/Raymond-code-signing.cer)
+- 文件校验：[`SHA256SUMS.txt`](releases/2.11.41/SHA256SUMS.txt)
+- 发布说明：[2.11.41](docs/releases/2.11.41.md)
+- 当前公开版本：[GitHub Release 2.11.41](https://github.com/ra0811x/DesktopGuardPro/releases/tag/v2.11.41)
 - SHA-256：
-  `40700FA8823C493CDC4C798BCCC0F872F53B02C7E22D7915D2DF69AEA946B9A6`
+  `952E9C5F4E08751164306FF99CB72B8AD164485C753B0F3BA08A925A5D8DAEA5`
 - 签名者：`CN=Raymond`
 - 证书指纹：`DC38087948CDD021FD794F0D7B6B4F5A12345AEE`
 
-2.11.40 MSI 允许指定旧测试证书迁移到当前 Raymond 证书，保留数据后再安装也可使用该规则。
-安装兼容范围见 [发布说明](docs/releases/2.11.40.md)。
+2.11.41 保留 2.11.40 的指定证书迁移规则。解锁范围和验证结果见
+[发布说明](docs/releases/2.11.41.md)。
 
 ## 产品能力
 
@@ -138,7 +136,8 @@ Ctrl+Alt+Delete 的安全桌面。
 远程注入输入保持可用。首次使用时需设置本地密码，已保存的密码可直接使用。
 结束方式可选择 1–480 分钟后自动释放，或持续到验证解锁。默认按
 **Ctrl+Alt+Space** 或点击 **解除锁定** 打开密码窗口；密码和恢复码在同一输入框
-验证。窗口打开期间键鼠保持可用，取消后恢复锁定，验证成功或定时到期后释放。
+验证。窗口打开期间只允许密码框接收受限键盘输入，所有鼠标及桌面快捷键继续阻断；
+取消后恢复锁定，验证成功或定时到期后释放。
 服务或系统重启后不会自动重新锁定。
 
 钩子引擎、解锁状态机、密码窗口及输入法处理复用 DeskGuard 源码，位于
@@ -211,7 +210,7 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 1. 结束正在进行的保护会话。
 2. 关闭 Desktop Guard Pro 主窗口。
 3. 打开
-   [`DesktopGuardPro-2.11.40-windows-amd64.msi`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.40/DesktopGuardPro-2.11.40-windows-amd64.msi)。
+   [`DesktopGuardPro-2.11.41-windows-amd64.msi`](releases/2.11.41/DesktopGuardPro-2.11.41-windows-amd64.msi)。
 4. 确认管理员权限和 Raymond 发布者信息。
 5. 选择安装目录和桌面快捷方式选项。
 6. 等待服务安装、启动和健康检查完成。
@@ -240,7 +239,8 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 | `frontend/` | WinUI 3 原生界面及状态回归工程。 |
 | `docs/` | 模块说明、架构操作、需求验收、发布说明和最新验证记录。 |
 | `assets/` | 应用图标和品牌资源。 |
-| `releases/2.11.40/` | 当前 MSI、构建回执、对应源码包、公开证书和校验清单。 |
+| `releases/2.11.41/` | GitHub 当前发布版本的原始发布物。 |
+| `releases/2.11.40/` | 历史发布版本的原始发布物。 |
 
 当前发布流程从
 `frontend/DesktopGuardPro.Native/DesktopGuardPro.Native.csproj` 生成桌面界面。
@@ -267,7 +267,7 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 
 ```powershell
 go -C backend run ./cmd/desktop-guard-release `
-  --version 2.11.40 `
+  --version 2.11.41 `
   --output ../dist/staging
 ```
 
@@ -284,8 +284,8 @@ dotnet build `
 
 ```powershell
 $msiArguments = @{
-  Version = '2.11.40'
-  OutputDirectory = 'releases\2.11.40'
+  Version = '2.11.41'
+  OutputDirectory = 'releases\2.11.41'
   CertificateStore = 'CurrentUser'
   CertificateThumbprint = '<certificate-thumbprint>'
 }
@@ -316,8 +316,8 @@ go -C backend vet ./...
 
 $nativeUiTest = @{
   ExecutablePath = `
-    'dist\staging\DesktopGuardPro-2.11.40-windows-amd64\desktop-guard-ui.exe'
-  ExpectedVersion = '2.11.40'
+    'dist\staging\DesktopGuardPro-2.11.41-windows-amd64\desktop-guard-ui.exe'
+  ExpectedVersion = '2.11.41'
 }
 .\scripts\test-native-ui-release.ps1 @nativeUiTest
 ```
@@ -344,9 +344,8 @@ go -C backend test ./internal/storage -run TestStorageScale -count=1
 Remove-Item Env:DGP_STORAGE_SCALE_TEST
 ```
 
-`2.11.40` 的 Go 全量测试、vet、维护模块 race、原生状态和界面结构、
-Release 构建及指定证书迁移回归通过。键鼠回归使用模拟回调，
-未启用真实键鼠钩子。本轮未重新执行真实密码窗口交互或界面启动探测。
+`2.11.41` 的 Go 包回归、vet、钩子/代理/服务相关 race、原生状态和界面结构、
+Release 构建及密码窗口隔离回归通过。键鼠回归使用模拟回调，未启用真实钩子。
 发布包经过 MSI 门禁、WiX/ICE、四个组件与 MSI 签名、产品版本和构建回执
 SHA-256 核对。目标设备安装升级及真实键鼠锁定、远程输入仍待实机验收。
 

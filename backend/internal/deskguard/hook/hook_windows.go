@@ -25,9 +25,9 @@ import (
 
 // 保护状态。
 const (
-	stateOff       int32 = iota // 关闭：一切放行
-	stateProtecting             // 保护中：拦本地物理输入，放行注入输入
-	stateUnlocking              // 解锁中：临时放行物理输入，让用户输密码
+	stateOff        int32 = iota // 关闭：一切放行
+	stateProtecting              // 保护中：拦本地物理输入，放行注入输入
+	stateUnlocking               // 解锁中：只向已注册的密码输入框放行安全键盘输入
 )
 
 // 解锁模式。
@@ -51,13 +51,13 @@ const (
 	wmSysKeyDown = 0x0104
 	wmSysKeyUp   = 0x0105
 
-	wmMouseMove     = 0x0200
-	wmLButtonDown   = 0x0201
-	wmRButtonDown   = 0x0204
-	wmMButtonDown   = 0x0207
-	wmMouseWheel    = 0x020A
-	wmMouseHWheel   = 0x020E
-	wmXButtonDown   = 0x020B
+	wmMouseMove   = 0x0200
+	wmLButtonDown = 0x0201
+	wmRButtonDown = 0x0204
+	wmMButtonDown = 0x0207
+	wmMouseWheel  = 0x020A
+	wmMouseHWheel = 0x020E
+	wmXButtonDown = 0x020B
 
 	wmQuit = 0x0012
 
@@ -134,6 +134,9 @@ var (
 	procSetWindowsHook  = user32.NewProc("SetWindowsHookExW")
 	procUnhookWindows   = user32.NewProc("UnhookWindowsHookEx")
 	procCallNextHookEx  = user32.NewProc("CallNextHookEx")
+	procGetForeground   = user32.NewProc("GetForegroundWindow")
+	procGetGUIThread    = user32.NewProc("GetGUIThreadInfo")
+	procGetWindowThread = user32.NewProc("GetWindowThreadProcessId")
 	procGetMessageW     = user32.NewProc("GetMessageW")
 	procPostThreadMsgW  = user32.NewProc("PostThreadMessageW")
 	procGetModuleHandle = kernel32.NewProc("GetModuleHandleW")
@@ -150,6 +153,8 @@ var (
 // Engine 管理键鼠钩子与保护状态。
 type Engine struct {
 	state int32 // 原子访问，取值 stateOff/stateProtecting/stateUnlocking
+	// 本地密码窗口使用严格输入隔离；系统凭据窗口保留原输入路径。
+	restrictUnlockInput int32
 
 	mode int32 // 原子访问：modeCombo / modeTap
 
@@ -169,6 +174,11 @@ type Engine struct {
 	altDown   bool
 	shiftDown bool
 
+	targetMu          sync.RWMutex
+	unlockDialog      uintptr
+	unlockInput       uintptr
+	unlockInputActive func(uintptr, uintptr) bool
+
 	events    chan Event
 	unlockReq chan struct{}
 
@@ -184,12 +194,23 @@ type Engine struct {
 // New 创建引擎。unlock 为解锁组合键。
 func New(unlock Hotkey) *Engine {
 	return &Engine{
-		unlock:    unlock,
-		events:    make(chan Event, 8),
-		unlockReq: make(chan struct{}, 1),
-		started:   make(chan error, 1),
-		stopped:   make(chan struct{}),
+		unlock:              unlock,
+		restrictUnlockInput: 1,
+		unlockInputActive:   nativeUnlockInputActive,
+		events:              make(chan Event, 8),
+		unlockReq:           make(chan struct{}, 1),
+		started:             make(chan error, 1),
+		stopped:             make(chan struct{}),
 	}
+}
+
+// SetUnlockInputRestricted 设置验证态是否只允许已注册密码框接收输入。
+func (e *Engine) SetUnlockInputRestricted(restricted bool) {
+	value := int32(0)
+	if restricted {
+		value = 1
+	}
+	atomic.StoreInt32(&e.restrictUnlockInput, value)
 }
 
 // Events 返回被拦截物理输入的事件通道。
@@ -253,13 +274,97 @@ func (e *Engine) registerTapKey(vk uint32, isDown bool) (isTap, reached bool) {
 }
 
 // Protect 进入保护状态：拦本地物理输入。
-func (e *Engine) Protect() { atomic.StoreInt32(&e.state, stateProtecting) }
+func (e *Engine) Protect() {
+	e.clearUnlockInputTarget()
+	atomic.StoreInt32(&e.state, stateProtecting)
+}
 
 // Unprotect 退出保护：一切放行。
-func (e *Engine) Unprotect() { atomic.StoreInt32(&e.state, stateOff) }
+func (e *Engine) Unprotect() {
+	e.clearUnlockInputTarget()
+	atomic.StoreInt32(&e.state, stateOff)
+}
 
-// BeginUnlock 进入解锁态：临时放行物理输入，供用户输密码。
-func (e *Engine) BeginUnlock() { atomic.StoreInt32(&e.state, stateUnlocking) }
+// BeginUnlock 原子进入验证态。只有保护态可以启动一次密码验证。
+func (e *Engine) BeginUnlock() bool {
+	if !atomic.CompareAndSwapInt32(&e.state, stateProtecting, stateUnlocking) {
+		return false
+	}
+	e.clearUnlockInputTarget()
+	return true
+}
+
+// RegisterUnlockInputTarget 将验证态的键盘输入限制到当前密码框。
+// 返回值撤销本次注册；对话框关闭时必须调用。
+func RegisterUnlockInputTarget(dialog, input uintptr) func() {
+	activeMu.Lock()
+	engine := activeEngine
+	activeMu.Unlock()
+	if engine == nil || dialog == 0 || input == 0 {
+		return func() {}
+	}
+	engine.targetMu.Lock()
+	engine.unlockDialog = dialog
+	engine.unlockInput = input
+	engine.targetMu.Unlock()
+	return func() {
+		engine.targetMu.Lock()
+		if engine.unlockDialog == dialog && engine.unlockInput == input {
+			engine.unlockDialog = 0
+			engine.unlockInput = 0
+		}
+		engine.targetMu.Unlock()
+	}
+}
+
+func (e *Engine) clearUnlockInputTarget() {
+	e.targetMu.Lock()
+	e.unlockDialog = 0
+	e.unlockInput = 0
+	e.targetMu.Unlock()
+}
+
+func (e *Engine) passwordInputActive() bool {
+	e.targetMu.RLock()
+	dialog, input := e.unlockDialog, e.unlockInput
+	active := e.unlockInputActive
+	e.targetMu.RUnlock()
+	return dialog != 0 && input != 0 && active != nil && active(dialog, input)
+}
+
+type guiThreadInfo struct {
+	Size, Flags                                  uint32
+	Active, Focus, Capture, MenuOwner            uintptr
+	MoveSize, Caret                              uintptr
+	CaretLeft, CaretTop, CaretRight, CaretBottom int32
+}
+
+func nativeUnlockInputActive(dialog, input uintptr) bool {
+	foreground, _, _ := procGetForeground.Call()
+	if foreground != dialog {
+		return false
+	}
+	threadID, _, _ := procGetWindowThread.Call(dialog, 0)
+	if threadID == 0 {
+		return false
+	}
+	info := guiThreadInfo{Size: uint32(unsafe.Sizeof(guiThreadInfo{}))}
+	ok, _, _ := procGetGUIThread.Call(threadID, uintptr(unsafe.Pointer(&info)))
+	return ok != 0 && info.Active == dialog && info.Focus == input
+}
+
+func isPasswordInputKey(vk uint32) bool {
+	if (vk >= '0' && vk <= '9') || (vk >= 'A' && vk <= 'Z') ||
+		(vk >= 0x60 && vk <= 0x6F) || (vk >= 0xBA && vk <= 0xE2) {
+		return true
+	}
+	switch vk {
+	case 0x08, 0x0D, 0x1B, 0x20, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2E,
+		vkShift, vkLShift, vkRShift, 0x14:
+		return true
+	}
+	return false
+}
 
 // State 返回当前状态（供测试/展示）。
 func (e *Engine) State() int32 { return atomic.LoadInt32(&e.state) }
@@ -414,11 +519,22 @@ var keyboardCallback = windows.NewCallback(func(nCode int32, wparam uintptr, lpa
 		e.updateModifier(ks.VkCode, isDown)
 	}
 
-	if atomic.LoadInt32(&e.state) == stateProtecting && !injected {
+	state := atomic.LoadInt32(&e.state)
+	if state == stateUnlocking {
+		if atomic.LoadInt32(&e.restrictUnlockInput) == 0 {
+			return callNext(nCode, wparam, lparam)
+		}
+		if e.passwordInputActive() && isPasswordInputKey(ks.VkCode) {
+			return callNext(nCode, wparam, lparam)
+		}
+		return 1
+	}
+
+	if state == stateProtecting && !injected {
 		if atomic.LoadInt32(&e.mode) == modeTap {
 			// 连点模式：连点键静默拦截并计数，达标则通知上层。
 			if isTap, reached := e.registerTapKey(ks.VkCode, isDown); isTap {
-				if reached {
+				if reached && e.BeginUnlock() {
 					e.signalUnlock()
 				}
 				return 1
@@ -426,7 +542,9 @@ var keyboardCallback = windows.NewCallback(func(nCode int32, wparam uintptr, lpa
 		} else {
 			// 组合键模式：命中解锁组合键则通知上层，阻断该键。
 			if isDown && !isModifier(ks.VkCode) && e.matchesUnlock(ks.VkCode) {
-				e.signalUnlock()
+				if e.BeginUnlock() {
+					e.signalUnlock()
+				}
 				return 1
 			}
 		}
@@ -459,7 +577,14 @@ var mouseCallback = windows.NewCallback(func(nCode int32, wparam uintptr, lparam
 	ms := (*msllhookstruct)(lparam)
 	injected := ms.Flags&llmhfInjected != 0
 
-	if atomic.LoadInt32(&e.state) == stateProtecting && !injected {
+	state := atomic.LoadInt32(&e.state)
+	if state == stateUnlocking {
+		if atomic.LoadInt32(&e.restrictUnlockInput) == 0 {
+			return callNext(nCode, wparam, lparam)
+		}
+		return 1
+	}
+	if state == stateProtecting && !injected {
 		// 纯移动不上报（避免刷屏），但仍阻断以冻结指针；点击/滚轮上报（带按键与坐标）。
 		if btn := mouseButton(uint32(wparam)); btn != MouseNone {
 			select {

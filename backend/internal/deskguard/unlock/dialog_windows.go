@@ -6,6 +6,7 @@ package unlock
 
 import (
 	"context"
+	"desktopguardpro/internal/deskguard/hook"
 	"github.com/lxn/walk"
 	dcl "github.com/lxn/walk/declarative"
 	"github.com/lxn/win"
@@ -71,6 +72,7 @@ func centerTopmost(h win.HWND) {
 func (a *App) passwordDialog() bool {
 	var dlg *walk.Dialog
 	var pwEdit *walk.LineEdit
+	var errorLabel *walk.Label
 	var okBtn, cancelBtn *walk.PushButton
 	result := false
 
@@ -87,6 +89,10 @@ func (a *App) passwordDialog() bool {
 				AssignTo:     &pwEdit,
 				PasswordMode: true,
 			},
+			dcl.Label{
+				AssignTo: &errorLabel,
+				Text:     "",
+			},
 			dcl.Composite{
 				Layout: dcl.HBox{},
 				Children: []dcl.Widget{
@@ -99,8 +105,9 @@ func (a *App) passwordDialog() bool {
 								result = true
 								dlg.Accept()
 							} else {
-								walk.MsgBox(dlg, "验证失败", "密码或恢复码不正确，请重试。", walk.MsgBoxIconError)
+								errorLabel.SetText("密码或恢复码不正确，请重试。")
 								pwEdit.SetText("")
+								pwEdit.SetFocus()
 							}
 						},
 					},
@@ -127,6 +134,8 @@ func (a *App) passwordDialog() bool {
 	a.prepDialog(dlg, pwEdit)
 	restore := a.hardenPasswordInput(dlg, pwEdit)
 	defer restore()
+	restoreTarget := hook.RegisterUnlockInputTarget(uintptr(dlg.Handle()), uintptr(pwEdit.Handle()))
+	defer restoreTarget()
 	dlg.Run()
 
 	return result

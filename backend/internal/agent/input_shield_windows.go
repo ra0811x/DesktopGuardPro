@@ -51,6 +51,7 @@ func (shield *windowsInputShield) Start(policy domain.InputShieldPolicy) error {
 	shield.engine.SetTapMode(policy.UnlockTrigger == domain.InputShieldUnlockTriggerTap)
 	shield.engine.SetTap(uint32(policy.UnlockKeyCode), policy.UnlockTapCount,
 		time.Duration(policy.UnlockTapWindowMilliseconds)*time.Millisecond)
+	shield.engine.SetUnlockInputRestricted(policy.CredentialMode == domain.InputShieldCredentialLocal)
 	if err := shield.engine.Start(); err != nil {
 		shield.engine.Stop()
 		return err
@@ -83,7 +84,7 @@ func (shield *windowsInputShield) relay() {
 		case <-shield.stop:
 			return
 		case <-shield.engine.UnlockRequests():
-			shield.RequestUnlock()
+			shield.signalUnlock()
 		case event := <-shield.engine.Events():
 			recorded := BlockedInputEvent{Kind: shieldInputKeyboard, KeyCode: int(event.VK), X: event.X, Y: event.Y,
 				Record: shield.policy.RecordBlockedInputCategory}
@@ -104,10 +105,12 @@ func (shield *windowsInputShield) relay() {
 func (shield *windowsInputShield) RequestUnlock() {
 	shield.stateMu.Lock()
 	defer shield.stateMu.Unlock()
-	if !shield.running.Load() || !shield.engine.IsProtecting() {
+	if !shield.running.Load() || !shield.engine.BeginUnlock() {
 		return
 	}
-	shield.engine.BeginUnlock()
+	shield.signalUnlock()
+}
+func (shield *windowsInputShield) signalUnlock() {
 	select {
 	case shield.unlock <- struct{}{}:
 	default:
