@@ -98,7 +98,9 @@ func runMSITransaction(ctx context.Context, stage string, options MSIOptions, de
 		if before.OwnerSID != "" && !strings.EqualFold(before.OwnerSID, dependencies.ownerSID) {
 			return result, installpolicy.ErrPolicyOwnerMismatch
 		}
-		if before.Manifest.SignerSHA256 != "" && !strings.EqualFold(before.Manifest.SignerSHA256, dependencies.signer.SHA256) {
+		if before.Manifest.SignerSHA256 != "" &&
+			!strings.EqualFold(before.Manifest.SignerSHA256, dependencies.signer.SHA256) &&
+			!isRaymondMSIPublisherMigration(before.Manifest.SignerSHA256, dependencies.signer.SHA256) {
 			return result, ErrUpgradePublisherMismatch
 		}
 		if err := dependencies.checkSession(before); err != nil {
@@ -165,6 +167,15 @@ func runMSITransaction(ctx context.Context, stage string, options MSIOptions, de
 	default:
 		return result, errors.New("unknown MSI transaction stage")
 	}
+}
+
+// MSIWindows verifies the caller's signature before entering the transaction.
+// After the owner check, allow only the retired test certificate to move to the
+// pinned Raymond certificate. The original manifest stays in the rollback state.
+func isRaymondMSIPublisherMigration(previous, current string) bool {
+	const retired = "464d3524d6fbc620538da0806fc260710a08d0ab77a854b111cb033cd91a4230"
+	const raymond = "670117e1bd2c3dc9a61724a3176e88cb0d6b608e37360e094881770c0813ef71"
+	return strings.EqualFold(previous, retired) && strings.EqualFold(current, raymond)
 }
 
 func saveMSIJournal(path string, journal msiJournal) error {

@@ -4,7 +4,7 @@ Desktop Guard Pro 是面向 Windows x64 的本机保护与审计应用。它通�
 用户会话代理、原生桌面界面和维护程序，记录保护期间的文件、进程、软件、设备、
 账户和系统配置变化，并提供风险分析、完整性校验和报告导出。
 
-本文按 2026 年 9 月 27 日的 `2.11.39` 源码和发布物核对。
+本文按 2026 年 9 月 30 日的 `2.11.40` 源码和发布物核对。
 当前四个程序及安装包的签名者为 `Raymond`。
 
 详细的设计意图、进程架构、七页按钮与接口、配置生效条件和使用流程图，见
@@ -16,28 +16,28 @@ Desktop Guard Pro 是面向 Windows x64 的本机保护与审计应用。它通�
 
 ## 当前版本
 
-当前发布版本为 `2.11.39`，安装包位于项目的 `releases/2.11.39` 目录。本版修复
-键鼠回调指针问题，将 Go 后台和原生界面分别整理到 `backend/` 与 `frontend/`，
-更新构建路径，并使用 Raymond 证书签名。七页原生界面及已保存凭据保持兼容。
-发布目录保留最新安装包、构建回执和对应源码包；历史版本从 GitHub Releases 获取。
+当前发布版本为 `2.11.40`，安装包位于项目的 `releases/2.11.40` 目录。本版支持
+指定旧测试证书到 Raymond 证书的 MSI 迁移，解决保留旧数据时的发布者拒绝，
+保留所有者、会话、签名和回滚检查。七页原生界面及已保存凭据保持兼容。
+2.11.40 已发布到 GitHub；以前版本的原始发布文件保持不变。
 
 - 安装包：
-  [`DesktopGuardPro-2.11.39-windows-amd64.msi`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.39/DesktopGuardPro-2.11.39-windows-amd64.msi)
+  [`DesktopGuardPro-2.11.40-windows-amd64.msi`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.40/DesktopGuardPro-2.11.40-windows-amd64.msi)
 - 构建回执：
-  [`DesktopGuardPro-2.11.39-windows-amd64.msi.build.json`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.39/DesktopGuardPro-2.11.39-windows-amd64.msi.build.json)
+  [`DesktopGuardPro-2.11.40-windows-amd64.msi.build.json`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.40/DesktopGuardPro-2.11.40-windows-amd64.msi.build.json)
 - 对应发布源码：
-  [`DesktopGuardPro-2.11.39-source.zip`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.39/DesktopGuardPro-2.11.39-source.zip)
-- 公开证书：[`Raymond-code-signing.cer`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.39/Raymond-code-signing.cer)
-- 文件校验：[`SHA256SUMS.txt`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.39/SHA256SUMS.txt)
-- 发布说明：[2.11.39](docs/releases/2.11.39.md)
-- 下载页面：[GitHub Release](https://github.com/ra0811x/DesktopGuardPro/releases/tag/v2.11.39)
+  [`DesktopGuardPro-2.11.40-source.zip`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.40/DesktopGuardPro-2.11.40-source.zip)
+- 公开证书：[`Raymond-code-signing.cer`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.40/Raymond-code-signing.cer)
+- 文件校验：[`SHA256SUMS.txt`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.40/SHA256SUMS.txt)
+- 发布说明：[2.11.40](docs/releases/2.11.40.md)
+- 下载页面：[GitHub Release](https://github.com/ra0811x/DesktopGuardPro/releases/tag/v2.11.40)
 - SHA-256：
-  `C1CF82F615810466CD6A138660EEDF35C288AF01EEFBAC2E1D9E2D0C9EE7CE0C`
+  `40700FA8823C493CDC4C798BCCC0F872F53B02C7E22D7915D2DF69AEA946B9A6`
 - 签名者：`CN=Raymond`
 - 证书指纹：`DC38087948CDD021FD794F0D7B6B4F5A12345AEE`
 
-旧测试签名版本无法直接原位升级到本版，保留数据卸载仍会保留旧安装清单。
-安装兼容范围见 [发布说明](docs/releases/2.11.39.md)。
+2.11.40 MSI 允许指定旧测试证书迁移到当前 Raymond 证书，保留数据后再安装也可使用该规则。
+安装兼容范围见 [发布说明](docs/releases/2.11.40.md)。
 
 ## 产品能力
 
@@ -211,7 +211,7 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 1. 结束正在进行的保护会话。
 2. 关闭 Desktop Guard Pro 主窗口。
 3. 打开
-   [`DesktopGuardPro-2.11.39-windows-amd64.msi`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.39/DesktopGuardPro-2.11.39-windows-amd64.msi)。
+   [`DesktopGuardPro-2.11.40-windows-amd64.msi`](https://github.com/ra0811x/DesktopGuardPro/releases/download/v2.11.40/DesktopGuardPro-2.11.40-windows-amd64.msi)。
 4. 确认管理员权限和 Raymond 发布者信息。
 5. 选择安装目录和桌面快捷方式选项。
 6. 等待服务安装、启动和健康检查完成。
@@ -240,7 +240,7 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 | `frontend/` | WinUI 3 原生界面及状态回归工程。 |
 | `docs/` | 模块说明、架构操作、需求验收、发布说明和最新验证记录。 |
 | `assets/` | 应用图标和品牌资源。 |
-| `releases/2.11.39/` | 当前 MSI、构建回执、对应源码包、公开证书和校验清单。 |
+| `releases/2.11.40/` | 当前 MSI、构建回执、对应源码包、公开证书和校验清单。 |
 
 当前发布流程从
 `frontend/DesktopGuardPro.Native/DesktopGuardPro.Native.csproj` 生成桌面界面。
@@ -267,7 +267,7 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 
 ```powershell
 go -C backend run ./cmd/desktop-guard-release `
-  --version 2.11.39 `
+  --version 2.11.40 `
   --output ../dist/staging
 ```
 
@@ -284,8 +284,8 @@ dotnet build `
 
 ```powershell
 $msiArguments = @{
-  Version = '2.11.39'
-  OutputDirectory = 'releases\2.11.39'
+  Version = '2.11.40'
+  OutputDirectory = 'releases\2.11.40'
   CertificateStore = 'CurrentUser'
   CertificateThumbprint = '<certificate-thumbprint>'
 }
@@ -316,8 +316,8 @@ go -C backend vet ./...
 
 $nativeUiTest = @{
   ExecutablePath = `
-    'dist\staging\DesktopGuardPro-2.11.39-windows-amd64\desktop-guard-ui.exe'
-  ExpectedVersion = '2.11.39'
+    'dist\staging\DesktopGuardPro-2.11.40-windows-amd64\desktop-guard-ui.exe'
+  ExpectedVersion = '2.11.40'
 }
 .\scripts\test-native-ui-release.ps1 @nativeUiTest
 ```
@@ -344,8 +344,8 @@ go -C backend test ./internal/storage -run TestStorageScale -count=1
 Remove-Item Env:DGP_STORAGE_SCALE_TEST
 ```
 
-`2.11.39` 的 Go 全量测试、vet、DeskGuard callback 指针检查、钩子/代理/服务
-race、原生状态和界面结构、Release 构建通过。键鼠回归使用模拟回调，
+`2.11.40` 的 Go 全量测试、vet、维护模块 race、原生状态和界面结构、
+Release 构建及指定证书迁移回归通过。键鼠回归使用模拟回调，
 未启用真实键鼠钩子。本轮未重新执行真实密码窗口交互或界面启动探测。
 发布包经过 MSI 门禁、WiX/ICE、四个组件与 MSI 签名、产品版本和构建回执
 SHA-256 核对。目标设备安装升级及真实键鼠锁定、远程输入仍待实机验收。
@@ -365,7 +365,7 @@ SHA-256 核对。目标设备安装升级及真实键鼠锁定、远程输入仍
   代理会保留当前钩子，直到连接恢复并读取到任务停止或到期状态。
 - Windows 10 1809、Windows 11、睡眠恢复、磁盘满、设备拔除和安全日志清理仍需
   在目标设备执行发布门槛验证。
-- 已安装的旧测试签名版本与当前 Raymond 签名不同，发布者一致性门禁会拒绝原位升级。
+- MSI 仅接受指定旧测试证书到当前 Raymond 证书的迁移，其他发布者变化仍拒绝。
 
 ## 第三方许可
 

@@ -20,7 +20,8 @@ Desktop Guard Pro 是 Windows x64 本机保护与审计应用。Go 服务负责�
 | `docs/requirements-acceptance-matrix.md` | 功能要求及验收边界。 |
 | `docs/verification/current.md` | 最新工作区验证记录。 |
 | `docs/releases/` | 当前发布说明。 |
-| `releases/2.11.39/` | 当前 MSI、回执、源码包及 Raymond 公开证书，Git 忽略。 |
+| `releases/2.11.40/` | 当前 MSI、回执、对应源码包及公开证书，Git 忽略。 |
+| `releases/2.11.39/` | 保留的上一版原始发布物。 |
 | `releases/2.11.38/` | 保留原始发布物，不能混入新构建或重新签名。 |
 | `assets/` | 图标及安装器图片。 |
 | `installer/` | WiX 产品定义。 |
@@ -54,7 +55,7 @@ Desktop Guard Pro 是 Windows x64 本机保护与审计应用。Go 服务负责�
 
 ```powershell
 go -C backend run ./cmd/desktop-guard-release `
-  --version 2.11.39 --output ../dist/staging
+  --version 2.11.40 --output ../dist/staging
 ```
 
 单独构建原生界面：

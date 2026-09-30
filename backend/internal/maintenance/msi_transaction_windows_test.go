@@ -11,6 +11,119 @@ import (
 	"desktopguardpro/internal/maintenancegate"
 )
 
+const (
+	retiredTestPublisherSHA256 = "464d3524d6fbc620538da0806fc260710a08d0ab77a854b111cb033cd91a4230"
+	raymondTestPublisherSHA256 = "670117e1bd2c3dc9a61724a3176e88cb0d6b608e37360e094881770c0813ef71"
+)
+
+func raymondMigrationFixture(t *testing.T) (MSIOptions, msiDependencies) {
+	t.Helper()
+	options, dependencies := msiTestFixture(t)
+	options.Version = "2.11.40"
+	before, err := dependencies.snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before.Manifest.ProductVersion = "2.11.38"
+	before.Manifest.SignerSHA256 = retiredTestPublisherSHA256
+	before.Manifest.SignerSubject = "Desktop Guard Pro Test Signing"
+	dependencies.snapshot = func() (msiSnapshot, error) { return before, nil }
+	dependencies.signer = SignatureIdentity{SHA256: raymondTestPublisherSHA256, Subject: "Raymond"}
+	return options, dependencies
+}
+
+func TestMSIPrepareAcceptsPinnedRaymondMigrationAndPreservesRollback(t *testing.T) {
+	for _, installedService := range []bool{true, false} {
+		name := "installed_upgrade"
+		if !installedService {
+			name = "reinstall_with_retained_data"
+		}
+		t.Run(name, func(t *testing.T) {
+			options, dependencies := raymondMigrationFixture(t)
+			before, _ := dependencies.snapshot()
+			before.ServiceExisted, before.ServiceRunning = installedService, installedService
+			dependencies.snapshot = func() (msiSnapshot, error) { return before, nil }
+			if _, err := runMSITransaction(context.Background(), "prepare", options, dependencies); err != nil {
+				t.Fatalf("approved publisher migration rejected: %v", err)
+			}
+			journal, err := loadMSIJournal(filepath.Join(options.DataDirectory, maintenancegate.JournalFileName))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if journal.Signer.SHA256 != raymondTestPublisherSHA256 ||
+				journal.Before.Manifest.SignerSHA256 != retiredTestPublisherSHA256 ||
+				string(journal.Before.PolicyJSON) != "original policy" {
+				t.Fatal("migration changed the original publisher or policy snapshot")
+			}
+			failedHealth := errors.New("new service health failed")
+			dependencies.apply = func(msiJournal) error { return failedHealth }
+			if _, err := runMSITransaction(context.Background(), "apply", options, dependencies); !errors.Is(err, failedHealth) {
+				t.Fatalf("health failure lost: %v", err)
+			}
+			restored := false
+			dependencies.restore = func(journal msiJournal) error {
+				if journal.Before.Manifest.ProductVersion != "2.11.38" ||
+					journal.Before.Manifest.SignerSHA256 != retiredTestPublisherSHA256 ||
+					string(journal.Before.PolicyJSON) != "original policy" ||
+					journal.Before.ServiceExisted != installedService {
+					t.Fatal("rollback lost retained installation state")
+				}
+				restored = true
+				return nil
+			}
+			if _, err := runMSITransaction(context.Background(), "rollback", options, dependencies); err != nil || !restored {
+				t.Fatalf("migration rollback failed: %v", err)
+			}
+		})
+	}
+}
+
+func TestMSIPinnedRaymondMigrationRejectsOtherPublishersOwnersAndActiveSessions(t *testing.T) {
+	for _, failure := range []string{"unknown_old_key", "raymond_name_wrong_key", "reverse", "owner", "active"} {
+		t.Run(failure, func(t *testing.T) {
+			options, dependencies := raymondMigrationFixture(t)
+			before, _ := dependencies.snapshot()
+			switch failure {
+			case "unknown_old_key":
+				before.Manifest.SignerSHA256 = strings.Repeat("a", 64)
+			case "raymond_name_wrong_key":
+				dependencies.signer.SHA256 = strings.Repeat("b", 64)
+			case "reverse":
+				before.Manifest.SignerSHA256 = raymondTestPublisherSHA256
+				dependencies.signer.SHA256 = retiredTestPublisherSHA256
+			case "owner":
+				dependencies.ownerSID = "another owner"
+			case "active":
+				dependencies.checkSession = func(msiSnapshot) error { return ErrActiveProtectionSession }
+			}
+			dependencies.snapshot = func() (msiSnapshot, error) { return before, nil }
+			dependencies.stop = func() error { t.Fatal("rejected migration stopped the service"); return nil }
+			dependencies.backup = func(*msiJournal) error { t.Fatal("rejected migration changed data"); return nil }
+			if _, err := runMSITransaction(context.Background(), "prepare", options, dependencies); err == nil {
+				t.Fatal("unsafe publisher migration accepted")
+			}
+			if _, err := os.Stat(filepath.Join(options.DataDirectory, maintenancegate.JournalFileName)); !os.IsNotExist(err) {
+				t.Fatalf("rejected migration left a journal: %v", err)
+			}
+		})
+	}
+}
+
+func TestMSIPinnedRaymondMigrationDoesNotPermitSignerChangesDuringTransaction(t *testing.T) {
+	for _, stage := range []string{"apply", "commit", "rollback"} {
+		t.Run(stage, func(t *testing.T) {
+			options, dependencies := raymondMigrationFixture(t)
+			if _, err := runMSITransaction(context.Background(), "prepare", options, dependencies); err != nil {
+				t.Fatal(err)
+			}
+			dependencies.signer.SHA256 = retiredTestPublisherSHA256
+			if _, err := runMSITransaction(context.Background(), stage, options, dependencies); !errors.Is(err, ErrUpgradePublisherMismatch) {
+				t.Fatalf("transaction allowed signer change: %v", err)
+			}
+		})
+	}
+}
+
 func TestMSIPreflightRejectsOwnerPublisherAndActiveBeforeStop(t *testing.T) {
 	for _, failure := range []string{"owner", "publisher", "active"} {
 		t.Run(failure, func(t *testing.T) {

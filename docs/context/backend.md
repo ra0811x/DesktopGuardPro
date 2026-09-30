@@ -41,7 +41,7 @@
 go -C backend test ./... -count=1 -timeout=120s
 go -C backend vet ./...
 go -C backend run ./cmd/desktop-guard-release `
-  --version 2.11.39 --output ../dist/staging
+  --version 2.11.40 --output ../dist/staging
 ```
 
 单个包回归示例：
@@ -54,3 +54,7 @@ go -C backend test ./cmd/desktop-guard-release -count=1
 `TestReleaseInputsExistFromBackendModule` 验证原生工程、图标和许可文件可读取。
 钩子 callback 测试通过 Windows ABI 传递模拟输入结构；指针检查和 race
 使用 [项目上下文](../../PROJECT_CONTEXT.md) 中的专门命令。
+
+2.11.40 的 MSI 事务允许指定旧测试证书单向迁移到当前 Raymond 证书。
+迁移规则位于 `maintenance/msi_transaction_windows.go`，并保留所有者、活动会话、
+事务内签名者、备份和回滚检查。
