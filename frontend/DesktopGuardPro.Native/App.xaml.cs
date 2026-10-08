@@ -138,6 +138,7 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        LoadUiPreferences();
         var shell = CreateShell(
             out serviceStatus,
             out directoryInputs,
@@ -189,22 +190,18 @@ public partial class App : Application
         ConfigureWindowSize(mainWindow);
         mainWindow.Activate();
         EnsureInteractiveAgentStarted();
-        trayIcon = NativeTrayIcon.Create(mainWindow, "Desktop Guard Pro");
+        trayIcon = NativeTrayIcon.Create(mainWindow, "Desktop Guard Pro", RestoreMainWindow, ExitMainWindow);
         mainWindow.Closed += (_, _) =>
         {
+            startupConnectionCancellation.Cancel();
             statusRefreshTimer?.Stop();
             RestoreWindowProcedure();
             trayIcon?.Dispose();
         };
-        _ = RefreshHealthAsync();
-        _ = LoadDirectoriesAsync();
-        _ = LoadSessionStartPreviewAsync();
-        _ = LoadTemporaryInputControlAsync();
-        _ = LoadInputShieldManagementAsync();
-        _ = LoadMonitoringPolicyAsync();
+        _ = InitializeServiceViewsAsync();
         statusRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         statusRefreshTimer.Tick += async (_, _) => await RefreshHealthAsync();
-        statusRefreshTimer.Start();
+        ConfigureWindowPreferences();
     }
 
     private static void EnsureInteractiveAgentStarted()
@@ -296,6 +293,7 @@ public partial class App : Application
 
     private IntPtr HandleWindowMessage(IntPtr handle, uint message, IntPtr wParam, IntPtr lParam)
     {
+        if (trayIcon?.TryHandleMessage(message, lParam) == true) return IntPtr.Zero;
         if (message == WindowMessageGetMinMaxInfo && lParam != IntPtr.Zero)
         {
             var sizeInfo = Marshal.PtrToStructure<MinMaxInfo>(lParam);
@@ -322,11 +320,11 @@ public partial class App : Application
         windowHandle = IntPtr.Zero;
     }
 
-    private async Task RefreshHealthAsync()
+    private async Task<bool> RefreshHealthAsync()
     {
         if (serviceStatus is null || healthRefreshBusy)
         {
-            return;
+            return false;
         }
         healthRefreshBusy = true;
         serviceStatus.Text = "正在连接后台服务...";
@@ -340,12 +338,14 @@ public partial class App : Application
             UpdateGlobalServiceStatus(health.Status == "degraded" ? "degraded" : "running");
             ApplySession(health.Session);
             await LoadTemporaryInputControlAsync();
+            return true;
         }
         catch
         {
             serviceStatus.Text = "无法连接后台服务";
             UpdateGlobalServiceStatus("offline");
             ApplySession(null);
+            return false;
         }
         finally
         {
@@ -4055,6 +4055,8 @@ public partial class App : Application
         reportFormat.Items.Add(new ComboBoxItem { Content = "HTML 报告", Tag = "html" });
         reportFormat.Items.Add(new ComboBoxItem { Content = "Markdown 报告", Tag = "markdown" });
         reportFormat.Items.Add(new ComboBoxItem { Content = "JSON 报告", Tag = "json" });
+        reportFormat.SelectedItem = reportFormat.Items.OfType<ComboBoxItem>()
+            .First(item => string.Equals(item.Tag as string, uiPreferences.DefaultReportFormat, StringComparison.Ordinal));
         reportObjectDetails = new ComboBox
         {
             Header = "对象细节",
@@ -5381,7 +5383,9 @@ public partial class App : Application
             var dialog = new ContentDialog
             {
                 Title = "Desktop Guard Pro",
-                Content = "Windows 本机保护、审计与风险分析工具。所有审计数据默认保存在本机。",
+                Content = $"版本 {typeof(App).Assembly.GetName().Version?.ToString(3)}\n" +
+                    "Windows 本机保护、审计与风险分析工具。\n" +
+                    "界面自启动与偏好仅对当前用户生效。所有审计数据默认保存在本机。",
                 CloseButtonText = "关闭",
                 XamlRoot = navigation.XamlRoot,
             };
@@ -5392,7 +5396,7 @@ public partial class App : Application
         fileMenu.Items.Add(WithShortcut(CreateItem("历史会话", () => NavigateTo("history")), VirtualKey.H));
         fileMenu.Items.Add(WithShortcut(CreateItem("报告导出", () => NavigateTo("reports")), VirtualKey.E));
         fileMenu.Items.Add(new MenuFlyoutSeparator());
-        fileMenu.Items.Add(CreateItem("退出", () => mainWindow?.Close()));
+        fileMenu.Items.Add(CreateItem("退出", ExitMainWindow));
 
         var editMenu = CreateTopMenu("编辑");
         editMenu.Items.Add(WithShortcut(CreateItem("重点对象与递归设置", FocusDirectories), VirtualKey.D));
@@ -5419,10 +5423,8 @@ public partial class App : Application
         viewMenu.Items.Add(WithShortcut(CreateItem("展开或收起导航栏", () => navigation.IsPaneOpen = !navigation.IsPaneOpen), VirtualKey.B));
 
         var settingsMenu = CreateTopMenu("设置");
-        settingsMenu.Items.Add(CreateItem("系统设置", () => NavigateTo("monitoring-policy")));
-        settingsMenu.Items.Add(new MenuFlyoutSeparator());
-        settingsMenu.Items.Add(CreateItem("会话保留设置", () => NavigateTo("history")));
-        settingsMenu.Items.Add(CreateItem("敏感字段与报告设置", () => NavigateTo("reports")));
+        foreach (var item in CreateSettingsMenuItems(NavigateTo, FocusDirectories, FocusExclusions))
+            settingsMenu.Items.Add(item);
         settingsMenu.Items.Add(new MenuFlyoutSeparator());
         settingsMenu.Items.Add(CreateAsyncItem("关于 Desktop Guard Pro", ShowAboutAsync));
 
@@ -5444,12 +5446,14 @@ public partial class App : Application
         compactMenu.Items.Add(new MenuFlyoutSeparator());
         compactMenu.Items.Add(CreateAsyncItem("刷新当前页面", RefreshCurrentPageAsync));
         compactMenu.Items.Add(CreateItem("展开或收起导航栏", () => navigation.IsPaneOpen = !navigation.IsPaneOpen));
-        compactMenu.Items.Add(CreateItem("系统设置", () => NavigateTo("monitoring-policy")));
-        compactMenu.Items.Add(CreateItem("会话保留设置", () => NavigateTo("history")));
-        compactMenu.Items.Add(CreateItem("敏感字段与报告设置", () => NavigateTo("reports")));
-        compactMenu.Items.Add(CreateAsyncItem("关于 Desktop Guard Pro", ShowAboutAsync));
+        var compactSettings = new MenuFlyoutSubItem { Text = "设置" };
+        foreach (var item in CreateSettingsMenuItems(NavigateTo, FocusDirectories, FocusExclusions))
+            compactSettings.Items.Add(item);
+        compactSettings.Items.Add(new MenuFlyoutSeparator());
+        compactSettings.Items.Add(CreateAsyncItem("关于 Desktop Guard Pro", ShowAboutAsync));
+        compactMenu.Items.Add(compactSettings);
         compactMenu.Items.Add(new MenuFlyoutSeparator());
-        compactMenu.Items.Add(CreateItem("退出", () => mainWindow?.Close()));
+        compactMenu.Items.Add(CreateItem("退出", ExitMainWindow));
 
         menuBar.Items.Add(fileMenu);
         menuBar.Items.Add(editMenu);

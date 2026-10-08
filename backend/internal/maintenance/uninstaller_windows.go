@@ -40,6 +40,7 @@ type uninstallerDependencies struct {
 	checkNoActiveSession   func() error
 	restoreSystemChanges   func(string) error
 	unregisterStartup      func() error
+	unregisterUIStartup    func(ownerSID, uiExecutable string) error
 	deleteService          func(string) error
 	scheduleProgramRemoval func(InstallManifest) error
 	removeDataDirectory    func(string, string) error
@@ -61,6 +62,7 @@ func UninstallWindows(options UninstallOptions) (UninstallResult, error) {
 		checkNoActiveSession:   func() error { return checkPersistedProtectionState(options.DataDirectory) },
 		restoreSystemChanges:   RestoreRecordedSystemChanges,
 		unregisterStartup:      UnregisterAgentStartup,
+		unregisterUIStartup:    UnregisterUIStartup,
 		deleteService:          DeleteWindowsService,
 		scheduleProgramRemoval: ScheduleInstalledProgramRemoval,
 		removeDataDirectory:    removeServiceDataDirectory,
@@ -138,6 +140,18 @@ func uninstallWindows(options UninstallOptions, dependencies uninstallerDependen
 	stage = "remove_startup"
 	if err := dependencies.unregisterStartup(); err != nil {
 		return UninstallResult{}, fmt.Errorf("remove agent startup: %w", err)
+	}
+	if dependencies.unregisterUIStartup != nil {
+		stage = "remove_ui_startup"
+		for _, component := range installedManifest.Components {
+			if component.Name != "ui" {
+				continue
+			}
+			if err := dependencies.unregisterUIStartup(installedPolicy.OwnerUserSID, component.Path); err != nil {
+				return UninstallResult{}, fmt.Errorf("remove owner UI startup: %w", err)
+			}
+			break
+		}
 	}
 	stage = "delete_service"
 	if err := dependencies.deleteService(validated.ServiceName); err != nil {

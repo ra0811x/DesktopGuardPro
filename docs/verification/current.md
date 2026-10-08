@@ -1,99 +1,84 @@
 # Desktop Guard Pro 最新验证记录
 
-2026 年 10 月 8 日核对工作区六项修复，基准提交为 `927d0a1`。
-六项修复纳入 `2.11.42` 发布包；`2.11.41` 及历史发布文件保持原样。
-审查和修复实现见 [源码审查记录](../reviews/code-review-2026-10-08.md)。
+2026 年 10 月 8 日验证分级设置菜单、主界面自启动与用户偏好。源码基准为
+`608efbc`（正式版 2.11.42）。本轮修改纳入正式版 2.11.44，沿用已验证的
+本地体验 MSI，历史发布物保持原样。
 
-## 修复验证
+## 功能与边界
 
-六个复现场景先在修改前失败，再转为正式回归。修改后对应场景通过，边界检查包含
-失败回退、并发修订、过期活动、文件清单篡改和完整回滚。
+设置菜单在普通和紧凑布局共用同一构造器，保存成功后同步勾选状态。
 
-| 场景 | 结果与证据 |
+| 功能 | 实现及验证 |
 | --- | --- |
-| 暂停后恢复 | 真实协调器与采集控制器能完成恢复；超时返回暂停，记录恢复和回退事件。 |
-| 会话及修订变化 | 原生请求与服务持久化核对目标；旧恢复不覆盖并发修订，旧输入验证不结束替代会话。 |
-| 基线转入待确认 | 绑定准备修订的启动请求仍能返回刚完成的待确认结果，未绕过用户决定。 |
-| 仅用户会话活动 | 空服务端采集器列表保留写入器，模拟代理观察写入且停止时排空。 |
-| 完整运行文件 | 部署复制主程序集、配置、嵌套和空资源；运行文件摘要变化在安装前被拒绝。 |
-| 升级与回滚 | 更新旧 DLL、新增资源、移除已登记旧资源；健康检查失败恢复旧文件集和发布清单。未登记文件保留。 |
-| 旧安装清单 | 缺少 runtimeFiles 的既有清单继续加载；新清单能检测原生 DLL 篡改。 |
-| MSI 运行文件 | 安装验证检测旧 DLL；打包脚本在 WiX 执行前拒绝摘要不匹配的运行文件。 |
-| 活动归属 | 禁用、会话切换和同会话修订改变都不携带旧窗口或计数；服务拒绝旧修订上报。 |
-| 报告路径 | processImage 在对象省略及仅名称选项下裁剪，完整路径选项保留信息；嵌套结构通过。 |
-| 局部报告状态 | 单事件报告保留最新人工状态；状态位于范围外时仍验证完整性，篡改继续拒绝导出。 |
+| 分级菜单 | 常规与启动、保护与采集、临时输入控制、数据与报告四组；四种模式、五类采集详情、目标与排除、输入规则、设备、凭据和报告入口有实际处理函数。 |
+| 开机自启动（登录后） | 当前用户 Run 键的 DesktopGuardProUI 值，完整 EXE 路径加引号并带 --autostart；模拟注册表覆盖启用、关闭、旧路径更新、权限失败与写后核对。服务和代理启动项独立。 |
+| 自启动时收起到托盘 | 仅 --autostart 启动且托盘可用时隐藏，普通启动保持可见；状态回归覆盖两种启动与托盘失败。 |
+| 开机服务就绪 | 服务安装配置为 StartAutomatic，当前已安装服务只读核对为 Automatic/Running。界面启动连接最多尝试六次，失败间隔 5 秒；模拟回归覆盖稍后就绪、重试上限、关闭取消及连接完成时的取消。配置在连接成功后读取，不随健康轮询反复覆盖。 |
+| 关闭时收起到托盘 | 偏好决定系统关闭行为，文件菜单及托盘显式退出直接关闭；托盘失败不隐藏。 |
+| 托盘操作 | 回调接入已有窗口消息处理，单击或双击恢复，右键打开与退出。Explorer 重启后重新登记，失败则显示窗口；完成编译和源码核对，真实桌面交互未执行。 |
+| 自动刷新 | 默认每 5 秒查询服务状态；开关启动或停止界面定时器，手动刷新继续可用。 |
+| 默认报告格式 | HTML、Markdown、JSON 互斥选择并持久化，更新报告页；不自动开启敏感字段。 |
+| 用户偏好 | LocalAppData/DesktopGuardPro/ui-preferences.json，原子替换；测试覆盖缺失字段、损坏文件、重启读取、文件锁冲突及失败后旧文件保留。 |
+| 卸载清理 | 通过安装所有者 SID 定位 HKEY_USERS，仅删除指向本安装 UI 的启动项；模拟回归覆盖路径、类型、权限、所有者与活动会话门禁。升级不主动启用或重置界面启动项。 |
 
-正式回归位于对应的 `internal/service`、`collector`、`agent`、`maintenance`、
-`reporting` 和 `storage` 模块；发布清单回归位于 `cmd/desktop-guard-release`。
+真实登录自启动、Windows 启动应用管理的独立禁用状态、托盘与窗口交互仍需目标
+设备验收。本轮没有改动当前用户的实际自启动或偏好设置，没有启动真实键鼠钩子，
+没有安装 MSI 或替换已安装程序。
 
-## 全量检查
+## 回归与构建
 
-以下检查针对本轮工作区。键鼠验证使用模拟输入，安装与升级验证使用夹具和模拟系统依赖。
+涉及界面启动及卸载维护，执行全量 Go 与直接相关的原生检查。
 
 | 检查 | 结果 |
 | --- | --- |
-| Go 全包回归 | 通过；排除 TestAcquireInteractiveAgentInstanceIsExclusiveAndRecoverable。 |
+| Native.Tests | 原有分析、模式和输入策略通过；新增自启动、持久化、文件锁、托盘安全条件、显式退出及开机服务连接重试回归通过。 |
+| 原生结构 | test-native-ui-shell.ps1 通过，包含四组菜单、实际开关调用、普通与紧凑共用入口及当前用户注册表范围。 |
+| WinUI Release | 2.11.44 原生构建成功，零警告、零错误。 |
+| Go 全包 | 通过，排除 TestAcquireInteractiveAgentInstanceIsExclusiveAndRecoverable；没有停止已安装代理争用互斥体。 |
 | Go vet | 通过。 |
-| Go 模块校验 | all modules verified。 |
-| race | hook、agent、service、collector、storage、maintenance 通过。 |
-| 钩子 checkptr | -gcflags=all=-d=checkptr=2 通过。 |
-| Native.Tests | 历史选择、旧响应、分页、报告范围、模式草稿和临时控制策略通过。 |
-| 原生界面结构 | test-native-ui-shell.ps1 通过。 |
-| WinUI Release 构建 | 成功，零警告、零错误。 |
-| 四组件开发构建 | 发布工具完成原生自包含发布和三个 Go 组件构建；四组件摘要、505 条运行文件记录及 510 个 ZIP 条目一致。 |
-| MSI 发布门禁 | test-msi-release.ps1 通过，包括运行文件篡改拒绝。 |
-| MSI 表结构 | test-msi-package.ps1 通过，WiX/ICE 无告警；未安装夹具 MSI。 |
-| 工作区差异 | git diff --check 通过。 |
+| 维护模块 race | 通过。 |
+| MSI 门禁 | test-msi-release.ps1 通过。 |
+| MSI 表结构 | test-msi-package.ps1 通过，WiX/ICE 无告警；未安装夹具。 |
+| 实际组件构建 | MSI 构建工具完成原生自包含发布、三个 Go 程序构建、签名和清单定稿。 |
+| 差异检查 | git diff --check 通过，用户已有 AGENTS.md 删除状态保留。 |
 
-单实例用例使用产品级互斥体，可能被已安装代理持有。本轮按此前记录排除该用例，
-没有停止已安装代理来取得测试所有权。
-
-实际 Go 检查命令为：
+实际 Go 命令为：
 
 ```powershell
 go -C backend test ./... -count=1 -timeout=120s `
   -skip TestAcquireInteractiveAgentInstanceIsExclusiveAndRecoverable
 go -C backend vet ./...
-go -C backend mod verify
-go -C backend test -race ./internal/deskguard/hook ./internal/agent `
-  ./internal/service ./internal/collector ./internal/storage ./internal/maintenance `
-  -count=1 -timeout=120s `
-  -skip TestAcquireInteractiveAgentInstanceIsExclusiveAndRecoverable
-go -C backend test ./internal/deskguard/hook -count=1 -gcflags=all=-d=checkptr=2
+go -C backend test -race ./internal/maintenance -count=1 -timeout=120s
 ```
 
-## 交付边界
+## 2.11.44 发布包
 
-本轮没有安装 MSI、启动真实控制钩子或操作运行数据；发布组件与 MSI 已签名。
-既有 AGENTS.md 删除状态保留。真实键鼠、窗口交互和目标设备安装升级仍需实机验收。
-
-开发输出位于 `dist/fix-validation-20261008/`，前一轮临时复现位于
-`dist/code-review/`。已核对清理目标位于当前工作区的专用 dist 子目录。
-清理被自动审批以 `blocked by policy` 拒绝，两个目录暂留；正式回归位于源码模块中。
-
-## 2.11.42 发布验证
-
-2026 年 10 月 8 日从本轮源码重新构建 `2.11.42`，四个程序和 MSI 使用本机
-Raymond 证书签名并附带时间戳。构建在 `dist/release-2.11.42/` 完成，交付文件
-保存到新的 `releases/2.11.42/`，没有覆盖历史安装包。
+正式交付位于 `releases/2.11.44/`，包含 MSI、构建回执、对应标签的源码 ZIP、
+公开证书及 SHA256SUMS.txt。签名包从 `dist/settings-preview-2.11.44/` 复制，
+与已验证的体验包逐字节相同。历史 releases 文件保持原样。
 
 | 检查 | 结果 |
 | --- | --- |
-| 发布前回归 | Go 全包回归（同一单实例用例排除）、vet、mod verify、Native.Tests、原生结构、MSI 门禁及表结构重新通过。 |
-| 四组件签名 | Valid，CN=Raymond，指纹 DC38087948CDD021FD794F0D7B6B4F5A12345AEE，均附时间戳。 |
-| 原生版本与清单 | 产品版本 2.11.42，文件版本 2.11.42.0；应用清单无重复运行文件条目。只提取清单，未启动界面。 |
-| 实际 MSI | ProductVersion=2.11.42，510 个文件；WiX 链接成功、签名 Valid、时间戳存在。 |
-| MSI 回执 | 产品版本、签名指纹、六个完成步骤及 SHA-256 与实际 MSI 一致。 |
-| 只读解包核对 | 509 个组件及运行文件与签名构建一致；内嵌 release-manifest.json 核对四组件及 505 个运行文件。打包时重新定稿时间，因此不要求清单时间戳与打包前相同。 |
-| MSI 界面引用 | 解包工具出现 DARK1059 提示；直接查询实际 Control/ControlEvent 表，211 个控件、缺失控件引用为零。 |
-| 发布附件 | MSI、构建回执、对应标签源码 ZIP、公开证书及 SHA256SUMS.txt。私钥没有导出。 |
+| 版本 | MSI ProductVersion 与原生产品版本均为 2.11.44。 |
+| 体验包升级 | 实际 MSI Upgrade 表包含小于 2.11.44 的旧版本识别项，可从前一份 2.11.43 体验包升级；没有安装或执行升级。 |
+| 签名 | 四组件和 MSI 的 Authenticode 状态 Valid，签名者 CN=Raymond，指纹 DC38087948CDD021FD794F0D7B6B4F5A12345AEE，均带时间戳。 |
+| 回执 | 版本、六个完成步骤及 MSI SHA-256 与实际包一致。 |
+| 只读解包 | 510 个打包文件；内嵌清单的四组件和 505 个运行文件摘要全部匹配。实际 UI 主程序集包含开机自启动标签、启动重试及菜单偏好逻辑。 |
+| 清单与界面表 | 原生应用清单无重复运行文件；实际 MSI ControlEvent 全部引用存在的 Control 行。 |
 
 MSI SHA-256：
-`BA14F59091E5F44C1122F1D5DC9C5D00B8B178EDE8D5E930AB962BB0B71E1C03`。
-发布说明见 [2.11.42](../releases/2.11.42.md)。
+`CE6F89487F5BBCE2B547B550476E4D71AC346D7E492880037E55E90127478570`。
+签名检查使用当前用户库，没有重新执行 SYSTEM 账户验证；此前机器信任记录见项目状态。
 
-发布构建使用当前用户证书库验证签名。本轮没有重新执行 SYSTEM 账户验证；此前机器
-信任记录见项目状态。目标设备安装升级、真实键鼠与窗口交互仍保留实机验收边界。
+检查输出位于 `dist/settings-validation-20261008/`。核对绝对目标与非重解析点后，
+清理被自动审批以 `blocked by policy` 拒绝，目录暂留。本地体验 MSI 保留供用户核对。
+以前已被拒绝清理的审查、修复及 2.11.42 发布检查目录没有再次操作。
 
-交付包检查完成后，已核对本次清理目标为工作区专用目录 `dist/release-2.11.42/`。
-自动审批以 `blocked by policy` 拒绝清理，目录暂留，包含签名暂存及只读解包结果。
+开机启动补强的检查输出位于 `dist/settings-boot-validation-20261008/`，同样经
+绝对路径与重解析点核对后清理被拒绝，返回 `blocked by policy`。该目录暂留。
+更新体验包保存于 `dist/settings-preview-2.11.44/`；版本递增以支持从前一份 2.11.43
+体验包升级。前一份设置体验包保持原样，2.11.43 开机检查包不作为此次交付。
+
+发布前复核 MSI 的签名、时间戳、回执与摘要，确认实现源码在该包构建后没有变化。
+构建后的修改仅为发布资料；私钥没有导出，公开证书单独提供。
+发布说明见 [2.11.44](../releases/2.11.44.md)。

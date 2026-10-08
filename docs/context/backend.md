@@ -37,6 +37,11 @@
 `runtimeFiles` 保存相对路径、大小及 SHA-256。旧安装清单缺少该字段时仍可加载；
 独立升级只移除旧清单明确登记的资源，未登记文件保留。
 
+`maintenance/startup_windows.go` 继续管理机器级代理启动项，同时提供界面启动项
+的卸载清理。维护程序按已验证安装所有者 SID 打开 `HKEY_USERS`，仅删除指向当前
+安装 UI 路径的 `DesktopGuardProUI` 值；不同路径与类型的条目保留。界面开关
+直接使用当前用户库，安装和升级不主动启用主界面自启动。
+
 状态转换通过 `Coordinator.TransitionPersistedFrom` 核对会话 ID、修订和状态。
 暂停恢复先持久化活动状态，让控制器启动；确认超时后使用独立、有期限的上下文回退，
 回退只作用于本次操作的修订。仅用户会话活动模式保留写入器，允许服务端采集器列表为空。
@@ -53,7 +58,7 @@
 go -C backend test ./... -count=1 -timeout=120s
 go -C backend vet ./...
 go -C backend run ./cmd/desktop-guard-release `
-  --version 2.11.42 --output ../dist/staging
+  --version 2.11.44 --output ../dist/staging
 ```
 
 单个包回归示例：

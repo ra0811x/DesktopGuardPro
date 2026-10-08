@@ -4,7 +4,7 @@ Desktop Guard Pro 是面向 Windows x64 的本机保护与审计应用。它通�
 用户会话代理、原生桌面界面和维护程序，记录保护期间的文件、进程、软件、设备、
 账户和系统配置变化，并提供风险分析、完整性校验和报告导出。
 
-本文按 2026 年 10 月 8 日发布的 `2.11.42` 和源码核对。
+本文按 2026 年 10 月 8 日发布的 `2.11.44` 和源码核对。
 当前四个程序及安装包的签名者为 `Raymond`。
 
 详细的设计意图、进程架构、七页按钮与接口、配置生效条件和使用流程图，见
@@ -16,26 +16,26 @@ Desktop Guard Pro 是面向 Windows x64 的本机保护与审计应用。它通�
 
 ## 当前版本
 
-当前版本为 `2.11.42`，安装包位于 `releases/2.11.42`。本版修复暂停恢复、仅活动模式、
-完整运行文件维护、活动归属及报告导出。历史发布文件保持不变。
+当前版本为 `2.11.44`，安装包位于 `releases/2.11.44`。本版新增分级设置、
+界面开机自启动、托盘偏好和启动连接重试，保留此前六项修复。
 
 - 安装包：
-  [`DesktopGuardPro-2.11.42-windows-amd64.msi`](releases/2.11.42/DesktopGuardPro-2.11.42-windows-amd64.msi)
+  [`DesktopGuardPro-2.11.44-windows-amd64.msi`](releases/2.11.44/DesktopGuardPro-2.11.44-windows-amd64.msi)
 - 构建回执：
-  [`DesktopGuardPro-2.11.42-windows-amd64.msi.build.json`](releases/2.11.42/DesktopGuardPro-2.11.42-windows-amd64.msi.build.json)
+  [`DesktopGuardPro-2.11.44-windows-amd64.msi.build.json`](releases/2.11.44/DesktopGuardPro-2.11.44-windows-amd64.msi.build.json)
 - 对应发布源码：
-  [`DesktopGuardPro-2.11.42-source.zip`](releases/2.11.42/DesktopGuardPro-2.11.42-source.zip)
-- 公开证书：[`Raymond-code-signing.cer`](releases/2.11.42/Raymond-code-signing.cer)
-- 文件校验：[`SHA256SUMS.txt`](releases/2.11.42/SHA256SUMS.txt)
-- 发布说明：[2.11.42](docs/releases/2.11.42.md)
-- 当前公开版本：[GitHub Release 2.11.42](https://github.com/ra0811x/DesktopGuardPro/releases/tag/v2.11.42)
+  [`DesktopGuardPro-2.11.44-source.zip`](releases/2.11.44/DesktopGuardPro-2.11.44-source.zip)
+- 公开证书：[`Raymond-code-signing.cer`](releases/2.11.44/Raymond-code-signing.cer)
+- 文件校验：[`SHA256SUMS.txt`](releases/2.11.44/SHA256SUMS.txt)
+- 发布说明：[2.11.44](docs/releases/2.11.44.md)
+- 当前公开版本：[GitHub Release 2.11.44](https://github.com/ra0811x/DesktopGuardPro/releases/tag/v2.11.44)
 - SHA-256：
-  `BA14F59091E5F44C1122F1D5DC9C5D00B8B178EDE8D5E930AB962BB0B71E1C03`
+  `CE6F89487F5BBCE2B547B550476E4D71AC346D7E492880037E55E90127478570`
 - 签名者：`CN=Raymond`
 - 证书指纹：`DC38087948CDD021FD794F0D7B6B4F5A12345AEE`
 
-2.11.42 保留既有解锁行为和指定证书迁移规则。修复范围和验证结果见
-[发布说明](docs/releases/2.11.42.md)。
+2.11.44 保留既有解锁行为和指定证书迁移规则。修复范围和验证结果见
+[发布说明](docs/releases/2.11.44.md)。
 
 ## 产品能力
 
@@ -210,7 +210,7 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 1. 结束正在进行的保护会话。
 2. 关闭 Desktop Guard Pro 主窗口。
 3. 打开
-   [`DesktopGuardPro-2.11.42-windows-amd64.msi`](releases/2.11.42/DesktopGuardPro-2.11.42-windows-amd64.msi)。
+   [`DesktopGuardPro-2.11.44-windows-amd64.msi`](releases/2.11.44/DesktopGuardPro-2.11.44-windows-amd64.msi)。
 4. 确认管理员权限和 Raymond 发布者信息。
 5. 选择安装目录和桌面快捷方式选项。
 6. 等待服务安装、启动和健康检查完成。
@@ -239,7 +239,8 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 | `frontend/` | WinUI 3 原生界面及状态回归工程。 |
 | `docs/` | 模块说明、架构操作、需求验收、发布说明和最新验证记录。 |
 | `assets/` | 应用图标和品牌资源。 |
-| `releases/2.11.42/` | GitHub 当前发布版本的原始发布物。 |
+| `releases/2.11.44/` | GitHub 当前发布版本的原始发布物。 |
+| `releases/2.11.42/` | 历史发布版本的原始发布物。 |
 | `releases/2.11.41/` | 历史发布版本的原始发布物。 |
 | `releases/2.11.40/` | 历史发布版本的原始发布物。 |
 
@@ -268,7 +269,7 @@ Desktop Guard Pro 支持 Windows 10 版本 1809 或更高版本的 x64 系统。
 
 ```powershell
 go -C backend run ./cmd/desktop-guard-release `
-  --version 2.11.42 `
+  --version 2.11.44 `
   --output ../dist/staging
 ```
 
@@ -285,8 +286,8 @@ dotnet build `
 
 ```powershell
 $msiArguments = @{
-  Version = '2.11.42'
-  OutputDirectory = 'releases\2.11.42'
+  Version = '2.11.44'
+  OutputDirectory = 'releases\2.11.44'
   CertificateStore = 'CurrentUser'
   CertificateThumbprint = '<certificate-thumbprint>'
 }
@@ -317,8 +318,8 @@ go -C backend vet ./...
 
 $nativeUiTest = @{
   ExecutablePath = `
-    'dist\staging\DesktopGuardPro-2.11.42-windows-amd64\desktop-guard-ui.exe'
-  ExpectedVersion = '2.11.42'
+    'dist\staging\DesktopGuardPro-2.11.44-windows-amd64\desktop-guard-ui.exe'
+  ExpectedVersion = '2.11.44'
 }
 .\scripts\test-native-ui-release.ps1 @nativeUiTest
 ```
@@ -345,8 +346,8 @@ go -C backend test ./internal/storage -run TestStorageScale -count=1
 Remove-Item Env:DGP_STORAGE_SCALE_TEST
 ```
 
-`2.11.42` 的 Go 包回归、vet、钩子/代理/服务相关 race、原生状态和界面结构、
-Release 构建及六项缺陷的正式回归通过。键鼠回归使用模拟回调，未启用真实钩子。
+`2.11.44` 的 Go 包回归、vet、钩子/代理/服务相关 race、原生状态和界面结构、
+Release 构建及设置、自启动、偏好持久化和启动等待回归通过。键鼠回归使用模拟回调，未启用真实钩子。
 发布包经过 MSI 门禁、WiX/ICE、四个组件与 MSI 签名、产品版本和构建回执
 SHA-256 核对。目标设备安装升级及真实键鼠锁定、远程输入仍待实机验收。
 

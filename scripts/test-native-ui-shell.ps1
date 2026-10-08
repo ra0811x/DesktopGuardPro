@@ -12,6 +12,8 @@ $manifestPath = Join-Path $projectRoot 'frontend\DesktopGuardPro.Native\app.mani
 $brandImagePath = Join-Path $projectRoot 'assets\desktop-guard-pro.png'
 $appXaml = Get-Content -LiteralPath $appXamlPath -Raw
 $appCode = Get-Content -LiteralPath $appCodePath -Raw
+$settingsCodePath = Join-Path $projectRoot 'frontend\DesktopGuardPro.Native\App.Settings.cs'
+$appCode += Get-Content -LiteralPath $settingsCodePath -Raw
 $credentialPromptCode = Get-Content -LiteralPath $credentialPromptPath -Raw
 $project = Get-Content -LiteralPath $projectPath -Raw
 
@@ -374,6 +376,24 @@ if ($icons.Count -ne 7 -or @($icons | Select-Object -Unique).Count -ne 7) {
 $analysisCode = Get-Content (Join-Path $projectRoot 'frontend\DesktopGuardPro.Native\App.Analysis.cs') -Raw
 foreach ($requirement in @('CreateWorkspaceButton("打开会话", true)', 'CreateAnalysisSessionBar(', 'ResolveAnalysisSessionAsync(client)', 'OpenRiskEvidenceAsync', 'ReportSequenceRange.TryParse')) {
     if (-not $appCode.Contains($requirement)) { throw "Cross-page session wiring missing: $requirement" }
+}
+foreach ($settingsRequirement in @(
+    'Text = "常规与启动"', 'Text = "保护与采集"', 'Text = "临时输入控制"', 'Text = "数据与报告"',
+    '"开机自启动（登录后）"', '"自启动时收起到托盘"', '"关闭窗口时收起到托盘"',
+    '"自动刷新服务状态（5 秒）"', 'Text = "默认报告格式"',
+    'CreateSettingsMenuItems(NavigateTo, FocusDirectories, FocusExclusions)',
+    'uiStartup.SetEnabled(enabled)', 'uiPreferencesStore.Save(updated)',
+    'uiPreferences.ShouldHideOnClose(exitRequested, trayIcon?.IsAvailable == true)',
+    'args.Cancel = true', 'mainWindow.AppWindow.Hide()', 'ExitMainWindow')) {
+    if (-not $appCode.Contains($settingsRequirement)) {
+        throw "Native settings menu behavior is missing: $settingsRequirement"
+    }
+}
+$startupRegistryCode = Get-Content -LiteralPath (Join-Path $projectRoot 'frontend\DesktopGuardPro.Native\UiStartupRegistry.cs') -Raw
+if (-not $startupRegistryCode.Contains('Registry.CurrentUser') -or
+    -not $startupRegistryCode.Contains('ValueName = "DesktopGuardProUI"') -or
+    $startupRegistryCode.Contains('Registry.LocalMachine') -or $startupRegistryCode.Contains('DesktopGuardProAgent')) {
+    throw 'UI startup settings must only change the current user UI startup value.'
 }
 foreach ($method in @('LoadTimelineAsync', 'LoadRiskAsync', 'LoadAssetDifferencesAsync', 'ExportReportAsync')) {
     $body = [regex]::Match($appCode, ('private async Task ' + $method + '[\s\S]+?^    \}'), [Text.RegularExpressions.RegexOptions]::Multiline).Value

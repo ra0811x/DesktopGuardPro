@@ -20,7 +20,8 @@ Desktop Guard Pro 是 Windows x64 本机保护与审计应用。Go 服务负责�
 | `docs/requirements-acceptance-matrix.md` | 功能要求及验收边界。 |
 | `docs/verification/current.md` | 最新工作区验证记录。 |
 | `docs/releases/` | 当前发布说明。 |
-| `releases/2.11.42/` | GitHub 当前发布版本及本地原始发布物，Git 忽略。 |
+| `releases/2.11.44/` | GitHub 当前发布版本及本地原始发布物，Git 忽略。 |
+| `releases/2.11.42/` | 保留的历史原始发布物。 |
 | `releases/2.11.41/` | 保留的历史原始发布物。 |
 | `releases/2.11.40/` | 历史发布版本及本地原始发布物。 |
 | `releases/2.11.39/` | 保留的历史原始发布物。 |
@@ -57,7 +58,7 @@ Desktop Guard Pro 是 Windows x64 本机保护与审计应用。Go 服务负责�
 
 ```powershell
 go -C backend run ./cmd/desktop-guard-release `
-  --version 2.11.42 --output ../dist/staging
+  --version 2.11.44 --output ../dist/staging
 ```
 
 单独构建原生界面：
@@ -103,6 +104,7 @@ go -C backend test -race ./internal/deskguard/hook ./internal/agent `
   本地密码或恢复码。
 - 采集缺口、未完成基线和完整性结果必须按实际数据展示。
 - 发布包与工作区源码分别说明，未签名构建不能覆盖已发布安装包。
+- 主界面登录自启动与偏好按用户保存，独立于服务和代理的安装启动设置。
 - 状态转换绑定会话与修订，暂停恢复先持久化可启动状态，再确认采集；超时回退核对代次。
 - 发布和安装清单的 `runtimeFiles` 覆盖 WinUI 程序集、依赖和资源，供维护与回滚共用。
 
