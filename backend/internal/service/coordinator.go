@@ -11,6 +11,7 @@ var (
 	ErrNoCurrentSession       = errors.New("no current session")
 	ErrSessionInProgress      = errors.New("a session is already in progress")
 	ErrInvalidRestoredSession = errors.New("invalid restored session")
+	ErrSessionChanged         = errors.New("session changed during operation")
 )
 
 type Coordinator struct {
@@ -129,6 +130,29 @@ func (coordinator *Coordinator) TransitionPersisted(
 ) (domain.Session, error) {
 	coordinator.mu.Lock()
 	defer coordinator.mu.Unlock()
+	return coordinator.transitionLocked(next, persist)
+}
+
+// TransitionPersistedFrom binds asynchronous work to the session and revision
+// it observed, including when another request replaces the current session.
+func (coordinator *Coordinator) TransitionPersistedFrom(
+	expected domain.Session,
+	next domain.SessionState,
+	persist func(domain.Session) error,
+) (domain.Session, error) {
+	coordinator.mu.Lock()
+	defer coordinator.mu.Unlock()
+	if coordinator.current == nil || coordinator.current.ID != expected.ID ||
+		coordinator.current.Revision != expected.Revision || coordinator.current.State != expected.State {
+		return domain.Session{}, ErrSessionChanged
+	}
+	return coordinator.transitionLocked(next, persist)
+}
+
+func (coordinator *Coordinator) transitionLocked(
+	next domain.SessionState,
+	persist func(domain.Session) error,
+) (domain.Session, error) {
 
 	if coordinator.current == nil {
 		return domain.Session{}, ErrNoCurrentSession

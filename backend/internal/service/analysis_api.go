@@ -301,13 +301,19 @@ func (api *API) exportReport(ctx context.Context, request contracts.Message, cli
 		return api.analysisErrorResponse(request, err)
 	}
 	defer release()
-	records, totalEvents, err := api.readReportRange(ctx, payload)
+	records, totalEvents, statuses, err := api.readReportRangeWithFindingStatuses(ctx, payload)
 	if err != nil {
 		return api.analysisErrorResponse(request, err)
 	}
 	evaluation, err := api.evaluateRecords(ctx, payload.SessionID, records)
 	if err != nil {
 		return api.analysisErrorResponse(request, err)
+	}
+	for index := range evaluation.Findings {
+		status := risk.FindingStatus(statuses[evaluation.Findings[index].ID])
+		if validFindingStatus(status) {
+			evaluation.Findings[index].Status = status
+		}
 	}
 	session, err := api.analysis.store.GetSession(ctx, payload.SessionID)
 	if err != nil {
@@ -538,27 +544,38 @@ func (api *API) analysisErrorResponse(request contracts.Message, err error) (con
 	return api.errorResponse(request, ErrorCodeStorageFailure, "analysis request could not be completed")
 }
 
-func (api *API) readReportRange(ctx context.Context, request ReportExportRequest) ([]storage.EventRecord, uint64, error) {
+func (api *API) readReportRangeWithFindingStatuses(ctx context.Context, request ReportExportRequest) ([]storage.EventRecord, uint64, map[string]string, error) {
 	if store, ok := api.analysis.store.(interface {
-		ListEventsRange(context.Context, string, uint64, uint64) ([]storage.EventRecord, uint64, error)
+		ListEventsRangeWithFindingStatuses(context.Context, string, uint64, uint64) ([]storage.EventRecord, uint64, map[string]string, error)
 	}); ok {
-		return store.ListEventsRange(ctx, request.SessionID, request.FromSequence, request.ToSequence)
+		return store.ListEventsRangeWithFindingStatuses(ctx, request.SessionID, request.FromSequence, request.ToSequence)
 	}
+	// Compatibility stores provide the full session; derive both outputs from
+	// that same read, so a status lookup cannot race the selected evidence.
 	records, err := api.analysis.store.ListEvents(ctx, request.SessionID)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
-	total := uint64(len(records))
 	selected := make([]storage.EventRecord, 0)
+	statuses := make(map[string]string)
 	for _, record := range records {
 		if record.Event.Sequence >= request.FromSequence && (request.ToSequence == 0 || record.Event.Sequence <= request.ToSequence) {
 			selected = append(selected, record)
 		}
+		if record.Event.Action == "risk_finding_status_changed" {
+			var status struct {
+				FindingID string `json:"findingId"`
+				Status    string `json:"status"`
+			}
+			if json.Unmarshal(record.Payload, &status) == nil && validFindingStatus(risk.FindingStatus(status.Status)) {
+				statuses[status.FindingID] = status.Status
+			}
+		}
 	}
 	if len(selected) > storage.MaximumReportRangeEvents {
-		return nil, total, storage.ErrEventRangeTooLarge
+		return nil, uint64(len(records)), nil, storage.ErrEventRangeTooLarge
 	}
-	return selected, total, nil
+	return selected, uint64(len(records)), statuses, nil
 }
 
 func (runtime *analysisRuntime) acquire(ctx context.Context) (func(), error) {

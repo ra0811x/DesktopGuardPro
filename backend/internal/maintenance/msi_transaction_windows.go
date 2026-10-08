@@ -76,7 +76,7 @@ type msiDependencies struct {
 	finish       func(msiJournal) error
 }
 
-// Windows Installer restores its four application files. This journal keeps
+// Windows Installer restores the application files and native runtime. This journal keeps
 // non-MSI state and the session freeze alive through all deferred/rollback
 // processes, including a failure after the new service has passed its probe.
 func runMSITransaction(ctx context.Context, stage string, options MSIOptions, dependencies msiDependencies) (MSIResult, error) {
@@ -210,7 +210,7 @@ func loadMSIJournal(path string) (msiJournal, error) {
 	if err != nil {
 		return msiJournal{}, err
 	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > 512*1024 {
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > 4*maximumManifestSize {
 		return msiJournal{}, errors.New("invalid MSI journal file")
 	}
 	encoded, err := os.ReadFile(path)

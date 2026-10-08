@@ -747,10 +747,12 @@ func (repository *Repository) listEvents(ctx context.Context, sessionID string, 
 		}
 		previousHash = append(previousHash[:0], event.EventHash...)
 		expectedSequence++
-		if selection != nil {
-			if event.Sequence < selection.from || event.Sequence > selection.to {
-				continue
-			}
+		selected := selection == nil || (event.Sequence >= selection.from && event.Sequence <= selection.to)
+		readStatus := selection != nil && selection.findingStatuses != nil && event.Action == "risk_finding_status_changed"
+		if !selected && !readStatus {
+			continue
+		}
+		if selection != nil && selected {
 			selection.payloadBytes += len(event.EncryptedPayload)
 			if selection.payloadBytes > maximumReportRangePayloadBytes {
 				return nil, ErrEventRangeTooLarge
@@ -764,7 +766,18 @@ func (repository *Repository) listEvents(ctx context.Context, sessionID string, 
 		if err != nil {
 			return nil, fmt.Errorf("decrypt event %s: %w", event.EventID, err)
 		}
-		records = append(records, EventRecord{Event: event, Payload: payload})
+		if readStatus {
+			var status struct {
+				FindingID string `json:"findingId"`
+				Status    string `json:"status"`
+			}
+			if json.Unmarshal(payload, &status) == nil && status.FindingID != "" {
+				selection.findingStatuses[status.FindingID] = status.Status
+			}
+		}
+		if selected {
+			records = append(records, EventRecord{Event: event, Payload: payload})
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate audit events: %w", err)

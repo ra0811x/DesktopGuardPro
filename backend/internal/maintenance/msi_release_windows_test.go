@@ -34,6 +34,27 @@ func TestMSIRejectsOldOrDeferredFilesEvenWhenPublisherMatches(t *testing.T) {
 	if err := verifyMSIReleaseFiles(directory, "1.2.4", signer); err == nil {
 		t.Fatal("wrong product version accepted")
 	}
+	if err := os.WriteFile(filepath.Join(directory, "desktop-guard-ui.dll"), []byte("new assembly"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runtimeFiles, err := CollectRuntimeFiles(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest["runtimeFiles"] = runtimeFiles
+	encoded, _ = json.Marshal(manifest)
+	if err := os.WriteFile(filepath.Join(directory, "release-manifest.json"), encoded, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyMSIReleaseFiles(directory, "1.2.3", signer); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "desktop-guard-ui.dll"), []byte("old assembly"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyMSIReleaseFiles(directory, "1.2.3", signer); err == nil {
+		t.Fatal("MSI committed with a deferred old native assembly")
+	}
 	if err := os.WriteFile(filepath.Join(directory, "desktop-guard-ui.exe"), []byte("old signed UI still locked"), 0600); err != nil {
 		t.Fatal(err)
 	}

@@ -23,6 +23,7 @@ func verifyMSIReleaseFiles(directory, version, signer string) error {
 			SHA256    string `json:"sha256"`
 			Signature string `json:"signature"`
 		} `json:"components"`
+		RuntimeFiles *[]RuntimeFileRecord `json:"runtimeFiles"`
 	}
 	if err := json.Unmarshal(encoded, &release); err != nil {
 		return err
@@ -43,6 +44,9 @@ func verifyMSIReleaseFiles(directory, version, signer string) error {
 		if actual.Size != component.Size || !strings.EqualFold(actual.SHA256, component.SHA256) {
 			return fmt.Errorf("MSI component %s does not match the signed release; close the installed applications and retry", component.Name)
 		}
+	}
+	if release.RuntimeFiles != nil {
+		return verifyRuntimeFiles(directory, *release.RuntimeFiles)
 	}
 	return nil
 }

@@ -39,6 +39,7 @@ type upgraderDependencies struct {
 	checkNoActiveSession func() error
 	preflight            func(ValidatedInstallOptions) (PreflightReport, error)
 	prepareSwap          func([]ComponentReplacement) (componentSwapTransaction, error)
+	runtimeReplacements  func(ValidatedUpgradeOptions, InstallManifest) ([]ComponentReplacement, error)
 	unregisterStartup    func() error
 	registerStartup      func(string) error
 	stopService          func(string) error
@@ -70,7 +71,8 @@ func UpgradeWindows(options UpgradeOptions) (UpgradeResult, error) {
 		prepareSwap: func(replacements []ComponentReplacement) (componentSwapTransaction, error) {
 			return PrepareComponentSwap(replacements)
 		},
-		unregisterStartup: UnregisterAgentStartup, registerStartup: RegisterAgentStartup,
+		runtimeReplacements: prepareRuntimeReplacements,
+		unregisterStartup:   UnregisterAgentStartup, registerStartup: RegisterAgentStartup,
 		stopService: StopWindowsService, startService: StartWindowsService, waitForHealth: WaitForWindowsServiceHealth,
 		buildManifest: BuildInstallManifest, saveManifest: SaveInstallManifest, now: time.Now,
 	}
@@ -130,6 +132,13 @@ func upgradeWindows(options UpgradeOptions, dependencies upgraderDependencies) (
 		{Name: "agent", TargetPath: validated.Current.AgentExecutable, StagedPath: validated.Staged.AgentExecutable},
 		{Name: "maintenance", TargetPath: validated.Current.maintenanceExecutable(), StagedPath: validated.Staged.maintenanceExecutable()},
 	}
+	if dependencies.runtimeReplacements != nil {
+		runtimePairs, err := dependencies.runtimeReplacements(validated, installedManifest)
+		if err != nil {
+			return UpgradeResult{}, err
+		}
+		replacements = append(replacements, runtimePairs...)
+	}
 	swap, err := dependencies.prepareSwap(replacements)
 	if err != nil {
 		return UpgradeResult{}, err
@@ -151,6 +160,8 @@ func upgradeWindows(options UpgradeOptions, dependencies upgraderDependencies) (
 					return errors.Join(cause, err)
 				}
 			}
+		} else if err := swap.Rollback(); err != nil {
+			return errors.Join(cause, err)
 		}
 		if manifestWriteAttempted {
 			rollbackErrors = append(rollbackErrors, dependencies.saveManifest(validated.Current.DataDirectory, installedManifest))
@@ -162,7 +173,7 @@ func upgradeWindows(options UpgradeOptions, dependencies upgraderDependencies) (
 		return errors.Join(append([]error{cause}, rollbackErrors...)...)
 	}
 	if err := dependencies.unregisterStartup(); err != nil {
-		return UpgradeResult{}, err
+		return UpgradeResult{}, errors.Join(err, swap.Rollback())
 	}
 	startupRemoved = true
 	if err := dependencies.stopService(validated.Current.ServiceName); err != nil {
@@ -204,6 +215,57 @@ func upgradeWindows(options UpgradeOptions, dependencies upgraderDependencies) (
 		PreviousVersion: validated.Current.Version, CurrentVersion: validated.Staged.Version,
 		CompletedUTC: dependencies.now().UTC(),
 	}, nil
+}
+
+func prepareRuntimeReplacements(options ValidatedUpgradeOptions, installed InstallManifest) ([]ComponentReplacement, error) {
+	staged, err := readReleaseRuntimeFiles(options.Staged.InstallDirectory, true)
+	if err != nil {
+		return nil, err
+	}
+	pairs := make([]ComponentReplacement, 0, len(staged)+len(installed.RuntimeFiles)+1)
+	names := make(map[string]bool)
+	for _, file := range staged {
+		target, err := runtimeFilePath(options.Current.InstallDirectory, file.Path)
+		if err != nil {
+			return nil, err
+		}
+		source, err := runtimeFilePath(options.Staged.InstallDirectory, file.Path)
+		if err != nil {
+			return nil, err
+		}
+		pairs = append(pairs, ComponentReplacement{Name: file.Path, TargetPath: target, StagedPath: source, AllowCreate: true, SHA256: file.SHA256})
+		names[strings.ToLower(file.Path)] = true
+	}
+	// Only remove files owned by the old manifest. Legacy manifests without an
+	// inventory can still upgrade, but their unrecorded extra files are preserved.
+	for _, file := range installed.RuntimeFiles {
+		if names[strings.ToLower(file.Path)] {
+			continue
+		}
+		target, err := runtimeFilePath(options.Current.InstallDirectory, file.Path)
+		if err != nil {
+			return nil, err
+		}
+		pairs = append(pairs, ComponentReplacement{Name: file.Path, TargetPath: target, Remove: true})
+	}
+	manifestPath, err := runtimeFilePath(options.Staged.InstallDirectory, "release-manifest.json")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Lstat(manifestPath); err == nil {
+		record, err := inspectInstallComponent("release-manifest", manifestPath)
+		if err != nil {
+			return nil, err
+		}
+		target, err := runtimeFilePath(options.Current.InstallDirectory, "release-manifest.json")
+		if err != nil {
+			return nil, err
+		}
+		pairs = append(pairs, ComponentReplacement{Name: "release-manifest", TargetPath: target, StagedPath: manifestPath, AllowCreate: true, SHA256: record.SHA256})
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	return pairs, nil
 }
 
 func acquireMaintenanceWindow(dataDirectory string) (func() error, error) {

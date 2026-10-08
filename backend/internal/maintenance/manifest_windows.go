@@ -17,7 +17,7 @@ import (
 const (
 	InstallManifestFileName = "install-manifest.json"
 	installManifestVersion  = 2
-	maximumManifestSize     = 64 * 1024
+	maximumManifestSize     = 1024 * 1024
 )
 
 var ErrInstallManifestInvalid = errors.New("install manifest is invalid")
@@ -39,6 +39,7 @@ type InstallManifest struct {
 	SignerSHA256    string                   `json:"signerSha256"`
 	SignerSubject   string                   `json:"signerSubject"`
 	Components      []InstallComponentRecord `json:"components"`
+	RuntimeFiles    []RuntimeFileRecord      `json:"runtimeFiles,omitempty"`
 }
 
 func BuildInstallManifest(options ValidatedInstallOptions, preflight PreflightReport, installedUTC time.Time) (InstallManifest, error) {
@@ -66,10 +67,14 @@ func BuildInstallManifest(options ValidatedInstallOptions, preflight PreflightRe
 		}
 		records = append(records, record)
 	}
+	runtimeFiles, err := readReleaseRuntimeFiles(options.InstallDirectory, false)
+	if err != nil {
+		return InstallManifest{}, err
+	}
 	return InstallManifest{
 		SchemaVersion: installManifestVersion, ProductVersion: options.Version, InstalledUTC: installedUTC,
 		WindowsBuild: preflight.WindowsBuild, WebView2Version: preflight.WebView2Version,
-		SignerSHA256: preflight.SignerSHA256, SignerSubject: preflight.SignerSubject, Components: records,
+		SignerSHA256: preflight.SignerSHA256, SignerSubject: preflight.SignerSubject, Components: records, RuntimeFiles: runtimeFiles,
 	}, nil
 }
 
@@ -169,7 +174,7 @@ func verifyInstalledComponents(manifest InstallManifest, verifySignature func(st
 			}
 		}
 	}
-	return nil
+	return verifyRuntimeFiles(filepath.Dir(manifest.Components[0].Path), manifest.RuntimeFiles)
 }
 
 func validateInstallManifest(manifest InstallManifest) error {
@@ -202,7 +207,7 @@ func validateInstallManifest(manifest InstallManifest) error {
 			return ErrInstallManifestInvalid
 		}
 	}
-	return nil
+	return validateRuntimeRecords(manifest.RuntimeFiles)
 }
 
 func inspectInstallComponent(name, path string) (InstallComponentRecord, error) {

@@ -35,16 +35,17 @@ type releaseAsset struct {
 }
 
 type releaseManifest struct {
-	SchemaVersion   int                `json:"schemaVersion"`
-	ProductVersion  string             `json:"productVersion"`
-	Target          string             `json:"target"`
-	CreatedUTC      time.Time          `json:"createdUtc"`
-	SigningRequired bool               `json:"signingRequired"`
-	SigningCommand  string             `json:"signingCommand"`
-	SignerSHA256    string             `json:"signerSha256,omitempty"`
-	SignerSubject   string             `json:"signerSubject,omitempty"`
-	Components      []releaseComponent `json:"components"`
-	Assets          []releaseAsset     `json:"assets"`
+	SchemaVersion   int                             `json:"schemaVersion"`
+	ProductVersion  string                          `json:"productVersion"`
+	Target          string                          `json:"target"`
+	CreatedUTC      time.Time                       `json:"createdUtc"`
+	SigningRequired bool                            `json:"signingRequired"`
+	SigningCommand  string                          `json:"signingCommand"`
+	SignerSHA256    string                          `json:"signerSha256,omitempty"`
+	SignerSubject   string                          `json:"signerSubject,omitempty"`
+	Components      []releaseComponent              `json:"components"`
+	Assets          []releaseAsset                  `json:"assets"`
+	RuntimeFiles    []maintenance.RuntimeFileRecord `json:"runtimeFiles"`
 }
 
 const (
@@ -195,6 +196,11 @@ func createReleaseManifest(directory, version string, createdUTC time.Time) (rel
 			SHA256:   hex.EncodeToString(assetDigest.Sum(nil)),
 		})
 	}
+	runtimeFiles, err := maintenance.CollectRuntimeFiles(directory)
+	if err != nil {
+		return releaseManifest{}, err
+	}
+	manifest.RuntimeFiles = runtimeFiles
 	return manifest, nil
 }
 

@@ -141,6 +141,30 @@ try {
             throw "Finalized manifest does not match signed component: $name"
         }
     }
+    if ($null -ne $manifest.runtimeFiles) {
+        $declaredRuntimePaths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($runtimeRecord in $manifest.runtimeFiles) {
+            $runtimePath = [IO.Path]::GetFullPath((Join-Path $releaseDirectory $runtimeRecord.path))
+            $runtimePrefix = [IO.Path]::GetFullPath($releaseDirectory).TrimEnd('\') + '\'
+            if (-not $runtimePath.StartsWith($runtimePrefix, [StringComparison]::OrdinalIgnoreCase) -or
+                -not $declaredRuntimePaths.Add($runtimePath)) {
+                throw 'Finalized runtime inventory contains an unsafe or duplicate path.'
+            }
+            $runtimeInfo = Get-Item -LiteralPath $runtimePath
+            if ($runtimeInfo.PSIsContainer -or $runtimeInfo.Length -ne $runtimeRecord.size -or
+                ($runtimeInfo.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+                (Get-FileHash -LiteralPath $runtimePath -Algorithm SHA256).Hash -ne $runtimeRecord.sha256) {
+                throw "Finalized runtime inventory does not match file: $($runtimeRecord.path)"
+            }
+        }
+        foreach ($runtimeCandidate in Get-ChildItem -LiteralPath $releaseDirectory -Recurse -File -Force) {
+            if ($runtimeCandidate.DirectoryName -eq $releaseDirectory -and
+                ($runtimeCandidate.Name -in $componentNames -or $runtimeCandidate.Name -eq 'release-manifest.json')) { continue }
+            if (-not $declaredRuntimePaths.Contains($runtimeCandidate.FullName)) {
+                throw "Finalized runtime inventory omits file: $($runtimeCandidate.Name)"
+            }
+        }
+    }
     $completedSteps.Add('signed_manifest_finalized')
 
     $nativeRuntimeDirectory = Join-Path $buildRoot 'native-ui-runtime'

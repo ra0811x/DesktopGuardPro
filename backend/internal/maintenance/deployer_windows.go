@@ -67,6 +67,7 @@ func deployWindows(options DeployOptions, dependencies deployerDependencies) (De
 		"desktop-guard-agent.exe", "desktop-guard-maintenance.exe",
 	}
 	var signer SignatureIdentity
+	componentRecords := make(map[string]InstallComponentRecord)
 	for _, name := range components {
 		path := filepath.Join(sourceDirectory, name)
 		info, err := os.Lstat(path)
@@ -82,6 +83,15 @@ func deployWindows(options DeployOptions, dependencies deployerDependencies) (De
 		} else if !strings.EqualFold(signer.SHA256, identity.SHA256) {
 			return DeployResult{}, ErrUpgradePublisherMismatch
 		}
+		record, err := inspectInstallComponent(name, path)
+		if err != nil {
+			return DeployResult{}, err
+		}
+		componentRecords[name] = record
+	}
+	runtimeFiles, err := readReleaseRuntimeFiles(sourceDirectory, true)
+	if err != nil {
+		return DeployResult{}, err
 	}
 	if _, err := os.Lstat(installDirectory); err == nil || !os.IsNotExist(err) {
 		return DeployResult{}, ErrInstallLayoutInvalid
@@ -101,7 +111,42 @@ func deployWindows(options DeployOptions, dependencies deployerDependencies) (De
 		if err := dependencies.copyFile(filepath.Join(sourceDirectory, name), destination); err != nil {
 			return DeployResult{}, fmt.Errorf("copy component %q: %w", name, err)
 		}
+		actual, err := inspectInstallComponent(name, destination)
+		expected := componentRecords[name]
+		if err != nil || actual.Size != expected.Size || !strings.EqualFold(actual.SHA256, expected.SHA256) {
+			return DeployResult{}, fmt.Errorf("%w: copied component %q changed", ErrComponentInvalid, name)
+		}
+		identity, err := dependencies.verifySignature(destination)
+		if err != nil || !strings.EqualFold(identity.SHA256, signer.SHA256) {
+			return DeployResult{}, fmt.Errorf("%w: copied component %q signature invalid", ErrComponentInvalid, name)
+		}
 		copied = append(copied, destination)
+	}
+	for _, record := range runtimeFiles {
+		source, err := runtimeFilePath(sourceDirectory, record.Path)
+		if err != nil {
+			return DeployResult{}, err
+		}
+		destination, err := runtimeFilePath(installDirectory, record.Path)
+		if err != nil {
+			return DeployResult{}, err
+		}
+		if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+			return DeployResult{}, err
+		}
+		if err := dependencies.copyFile(source, destination); err != nil {
+			return DeployResult{}, err
+		}
+		copied = append(copied, destination)
+	}
+	if err := verifyRuntimeFiles(installDirectory, runtimeFiles); err != nil {
+		return DeployResult{}, err
+	}
+	if info, err := os.Lstat(filepath.Join(sourceDirectory, "release-manifest.json")); err == nil && info.Mode().IsRegular() {
+		if err := dependencies.copyFile(filepath.Join(sourceDirectory, "release-manifest.json"), filepath.Join(installDirectory, "release-manifest.json")); err != nil {
+			return DeployResult{}, err
+		}
+		copied = append(copied, filepath.Join(installDirectory, "release-manifest.json"))
 	}
 	installResult, err := dependencies.install(componentInstallOptions(
 		installDirectory, options.DataDirectory, options.ServiceName, strings.TrimSpace(options.Version),

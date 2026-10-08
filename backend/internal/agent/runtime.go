@@ -22,6 +22,8 @@ type ActivitySample struct {
 }
 
 type ActivitySummary struct {
+	SessionID             string
+	SessionRevision       uint64
 	WindowTitle           string
 	ProcessID             uint32
 	ProcessImage          string
@@ -47,10 +49,12 @@ type ActivityReporter interface {
 }
 
 type ActivityPolicy struct {
-	Enabled        bool
-	SampleInterval time.Duration
-	ReportInterval time.Duration
-	Capture        ActivityCapturePolicy
+	SessionID       string
+	SessionRevision uint64
+	Enabled         bool
+	SampleInterval  time.Duration
+	ReportInterval  time.Duration
+	Capture         ActivityCapturePolicy
 }
 
 type ActivityCapturePolicy struct {
@@ -81,15 +85,17 @@ type RuntimeOptions struct {
 }
 
 type Runtime struct {
-	source         ActivitySource
-	reporter       ActivityReporter
-	policyProvider ActivityPolicyProvider
-	inputShield    RuntimeComponent
-	enabled        bool
-	sampleInterval time.Duration
-	reportInterval time.Duration
-	capture        ActivityCapturePolicy
-	now            func() time.Time
+	source          ActivitySource
+	reporter        ActivityReporter
+	policyProvider  ActivityPolicyProvider
+	inputShield     RuntimeComponent
+	enabled         bool
+	sessionID       string
+	sessionRevision uint64
+	sampleInterval  time.Duration
+	reportInterval  time.Duration
+	capture         ActivityCapturePolicy
+	now             func() time.Time
 }
 
 func NewRuntime() *Runtime {
@@ -130,7 +136,7 @@ func defaultActivityCapturePolicy() ActivityCapturePolicy {
 }
 
 func (runtime *Runtime) Run(ctx context.Context) error {
-	if ctx == nil {
+	if ctx == nil || ctx.Err() != nil {
 		return nil
 	}
 	if runtime.inputShield == nil {
@@ -159,7 +165,12 @@ func (runtime *Runtime) runActivity(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-timer.C:
-			runtime.refreshActivityPolicy(ctx)
+			if runtime.refreshActivityPolicy(ctx) {
+				state = activityState{}
+				if resetter, ok := runtime.source.(interface{ ResetActivityCapture() }); ok {
+					resetter.ResetActivityCapture()
+				}
+			}
 			if runtime.enabled && runtime.source != nil && runtime.reporter != nil {
 				runtime.sampleAndReport(ctx, &state)
 			}
@@ -168,15 +179,21 @@ func (runtime *Runtime) runActivity(ctx context.Context) error {
 	}
 }
 
-func (runtime *Runtime) refreshActivityPolicy(ctx context.Context) {
+func (runtime *Runtime) refreshActivityPolicy(ctx context.Context) bool {
 	if runtime.policyProvider == nil {
-		return
+		return false
 	}
 	policy, err := runtime.policyProvider.CurrentActivityPolicy(ctx)
 	if err != nil {
-		return
+		changed := runtime.enabled
+		runtime.enabled = false
+		return changed
 	}
+	changed := runtime.enabled != policy.Enabled || runtime.sessionID != policy.SessionID ||
+		runtime.sessionRevision != policy.SessionRevision || runtime.capture != policy.Capture
 	runtime.enabled = policy.Enabled
+	runtime.sessionID = policy.SessionID
+	runtime.sessionRevision = policy.SessionRevision
 	if policy.SampleInterval > 0 {
 		runtime.sampleInterval = policy.SampleInterval
 	}
@@ -184,9 +201,12 @@ func (runtime *Runtime) refreshActivityPolicy(ctx context.Context) {
 		runtime.reportInterval = policy.ReportInterval
 	}
 	runtime.capture = policy.Capture
+	return changed
 }
 
 type activityState struct {
+	sessionID             string
+	sessionRevision       uint64
 	hasInputTick          bool
 	lastInputTick         uint32
 	inputActivityCount    uint64
@@ -224,6 +244,8 @@ func (runtime *Runtime) sampleAndReport(ctx context.Context, state *activityStat
 		state.foregroundStartUTC = now
 		state.lastReportedUTC = now
 	} else if firstSample {
+		state.sessionID = runtime.sessionID
+		state.sessionRevision = runtime.sessionRevision
 		state.lastWindowTitle = sample.WindowTitle
 		state.lastProcessID = sample.ProcessID
 		state.lastProcessImage = sample.ProcessImage
@@ -287,6 +309,7 @@ func applyActivityCapturePolicy(sample ActivitySample, policy ActivityCapturePol
 
 func (runtime *Runtime) reportCurrentWindow(ctx context.Context, state *activityState, now time.Time) error {
 	summary := ActivitySummary{
+		SessionID: state.sessionID, SessionRevision: state.sessionRevision,
 		WindowTitle: state.lastWindowTitle, ProcessID: state.lastProcessID, ProcessImage: state.lastProcessImage,
 		InputActivityCount: state.inputActivityCount, KeyboardActivityCount: state.keyboardActivityCount,
 		MouseClickCount: state.mouseClickCount, MouseWheelCount: state.mouseWheelCount,

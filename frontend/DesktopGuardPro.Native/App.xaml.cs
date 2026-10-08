@@ -388,11 +388,11 @@ public partial class App : Application
             }
             if (session?.State == "draft")
             {
-                session = (await client.TransitionSessionAsync("preparing", CancellationToken.None)).Session;
+                session = (await client.TransitionSessionAsync("preparing", CancellationToken.None, session)).Session;
             }
             if (session?.State == "preparing")
             {
-                session = (await client.TransitionSessionAsync("active", CancellationToken.None)).Session;
+                session = (await client.TransitionSessionAsync("active", CancellationToken.None, session)).Session;
             }
             if (session?.State == "baseline_review")
             {
@@ -411,11 +411,11 @@ public partial class App : Application
                 sessionStatus.Text = "请在 Windows 系统凭据窗口中确认结束保护。";
                 var challenge = await client.CreateEndVerificationChallengeAsync(CancellationToken.None);
                 using var credentials = WindowsCredentialPrompt.PromptForEndProtection();
-                session = (await client.EndSessionAsync(challenge, credentials, CancellationToken.None)).Session;
+                session = (await client.EndSessionAsync(challenge, credentials, CancellationToken.None, session)).Session;
             }
             if (session?.State == "finalizing")
             {
-                session = (await client.TransitionSessionAsync("completed", CancellationToken.None)).Session;
+                session = (await client.TransitionSessionAsync("completed", CancellationToken.None, session)).Session;
             }
             updatedSession = session;
             completed = true;
@@ -460,7 +460,7 @@ public partial class App : Application
                 return;
             }
             var target = health.Session.State == "paused" ? "active" : "paused";
-            var result = await client.TransitionSessionAsync(target, CancellationToken.None);
+            var result = await client.TransitionSessionAsync(target, CancellationToken.None, health.Session);
             protectionBusy = false;
             ApplySession(result.Session);
         }

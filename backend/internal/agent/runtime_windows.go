@@ -51,6 +51,18 @@ type windowsActivitySource struct {
 
 func newWindowsActivitySource() ActivitySource { return &windowsActivitySource{} }
 
+// Discard input transitions accumulated while activity was disabled. This does
+// not install a hook; an existing wheel monitor only has its counter cleared.
+func (source *windowsActivitySource) ResetActivityCapture() {
+	for virtualKey := 1; virtualKey < len(source.keyDown); virtualKey++ {
+		state, _, _ := getAsyncKeyState.Call(uintptr(virtualKey))
+		source.keyDown[virtualKey] = state&0x8000 != 0
+	}
+	source.shortcutWasDown = make(map[string]bool)
+	_ = sampleHighRiskShortcutTransitions(source.shortcutWasDown, source.keyDown)
+	source.wheelEvents.count.Store(0)
+}
+
 func (source *windowsActivitySource) Sample(ctx context.Context, policy ActivityCapturePolicy) (ActivitySample, error) {
 	if err := ctx.Err(); err != nil {
 		return ActivitySample{}, err
@@ -260,6 +272,7 @@ func (pipeActivityReporter) CurrentActivityPolicy(ctx context.Context) (Activity
 	}
 	policy := session.Session.MonitoringPolicy.Resolved()
 	activity := ActivityPolicy{
+		SessionID: session.Session.ID, SessionRevision: session.Session.Revision,
 		Enabled:        policy.UserSessionActivityEnabled,
 		SampleInterval: time.Duration(policy.UserSession.SampleIntervalSeconds) * time.Second,
 		ReportInterval: time.Duration(policy.UserSession.ReportIntervalSeconds) * time.Second,
@@ -312,11 +325,12 @@ func (pipeActivityReporter) Report(ctx context.Context, summary ActivitySummary)
 	if err := current.DecodePayload(&session); err != nil || session.Session == nil {
 		return errors.New("decode current protection session")
 	}
-	if session.Session.State != "active" && session.Session.State != "degraded" {
+	if (session.Session.State != "active" && session.Session.State != "degraded") ||
+		session.Session.ID != summary.SessionID || session.Session.Revision != summary.SessionRevision {
 		return nil
 	}
 	_, err = callService(requestContext, contracts.MessageTypeAgentActivityReport, coreservice.AgentActivityReportRequest{
-		SessionID: session.Session.ID, WindowTitle: summary.WindowTitle, ProcessID: summary.ProcessID,
+		SessionID: summary.SessionID, SessionRevision: summary.SessionRevision, WindowTitle: summary.WindowTitle, ProcessID: summary.ProcessID,
 		ProcessImage: summary.ProcessImage, InputActivityCount: summary.InputActivityCount,
 		KeyboardActivityCount: summary.KeyboardActivityCount, MouseClickCount: summary.MouseClickCount,
 		MouseWheelCount: summary.MouseWheelCount, ActivityStartUTC: summary.ActivityStartUTC,

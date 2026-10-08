@@ -138,6 +138,9 @@ func (controller *SessionController) HealthStatus() State {
 	if pipeline == nil {
 		return StateRunning
 	}
+	if pipeline.supervisor == nil {
+		return StateRunning
+	}
 	for _, status := range pipeline.supervisor.Statuses() {
 		if status.State == StateDegraded || status.State == StateStopped {
 			return StateDegraded
@@ -335,6 +338,12 @@ type sessionPipeline struct {
 }
 
 func (pipeline *sessionPipeline) running() bool {
+	if !pipeline.writer.accepting.Load() {
+		return false
+	}
+	if pipeline.supervisor == nil {
+		return true
+	}
 	for _, status := range pipeline.supervisor.Statuses() {
 		if status.State != StateRunning {
 			return false
@@ -353,9 +362,12 @@ func newSessionPipeline(
 	if err != nil {
 		return nil, err
 	}
-	supervisor, err := NewSupervisor(collectors, writer)
-	if err != nil {
-		return nil, err
+	var supervisor *Supervisor
+	if len(collectors) > 0 {
+		supervisor, err = NewSupervisor(collectors, writer)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return &sessionPipeline{
 		sessionID:      sessionID,
@@ -382,6 +394,10 @@ func (pipeline *sessionPipeline) start(parent context.Context) {
 	}()
 	go func() {
 		defer close(pipeline.collectorsDone)
+		if pipeline.supervisor == nil {
+			<-collectorsContext.Done()
+			return
+		}
 		if err := pipeline.supervisor.Run(collectorsContext); err != nil && collectorsContext.Err() == nil {
 			pipeline.errors <- fmt.Errorf("collector supervisor for session %s: %w", pipeline.sessionID, err)
 		}

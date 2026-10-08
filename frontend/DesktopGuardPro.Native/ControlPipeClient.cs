@@ -373,10 +373,11 @@ internal sealed class ControlPipeClient
 
     public async Task<SessionResult> TransitionSessionAsync(
         string state,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SessionInfo? expectedSession = null)
     {
         return await CallAsync<SessionResult>(
-            "session.transition", new { state }, "session.result", TimeSpan.FromSeconds(30), cancellationToken);
+            "session.transition", new { state, sessionId = expectedSession?.Id, expectedRevision = expectedSession?.Revision }, "session.result", TimeSpan.FromSeconds(30), cancellationToken);
     }
 
     public async Task<EndVerificationChallenge> CreateEndVerificationChallengeAsync(
@@ -393,13 +394,16 @@ internal sealed class ControlPipeClient
     public async Task<SessionResult> EndSessionAsync(
         EndVerificationChallenge challenge,
         SystemCredentials credentials,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SessionInfo? expectedSession = null)
     {
         return await CallAsync<SessionResult>(
             "session.transition",
             new
             {
                 state = "finalizing",
+                sessionId = expectedSession?.Id,
+                expectedRevision = expectedSession?.Revision,
                 verification = new
                 {
                     token = challenge.Token,

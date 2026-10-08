@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	winapi "golang.org/x/sys/windows"
@@ -40,6 +41,24 @@ func scheduleInstalledProgramRemoval(manifest InstallManifest, trustDirectory fu
 		}
 		paths = append(paths, component.Path)
 	}
+	directories := make(map[string]bool)
+	for _, file := range manifest.RuntimeFiles {
+		path, err := runtimeFilePath(installDirectory, file.Path)
+		if err != nil {
+			return err
+		}
+		paths = append(paths, path)
+		for parent := filepath.Dir(path); !samePath(parent, installDirectory); parent = filepath.Dir(parent) {
+			directories[parent] = true
+		}
+	}
+	paths = append(paths, filepath.Join(installDirectory, "release-manifest.json"))
+	orderedDirectories := make([]string, 0, len(directories))
+	for directory := range directories {
+		orderedDirectories = append(orderedDirectories, directory)
+	}
+	sort.Slice(orderedDirectories, func(i, j int) bool { return len(orderedDirectories[i]) > len(orderedDirectories[j]) })
+	paths = append(paths, orderedDirectories...)
 	if manifest.SchemaVersion == 1 {
 		paths = append(paths, filepath.Join(installDirectory, "desktop-guard-maintenance.exe"))
 	}
@@ -109,7 +128,8 @@ func filterPendingProgramRemovals(values, programPaths []string) ([]string, bool
 		if remove {
 			remove = false
 			for _, path := range programPaths {
-				if samePath(candidate, path) {
+				relative, relErr := filepath.Rel(path, candidate)
+				if samePath(candidate, path) || (relErr == nil && filepath.IsLocal(relative)) {
 					remove = true
 					break
 				}

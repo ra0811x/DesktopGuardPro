@@ -371,7 +371,7 @@ func redactPayloadValue(value any, policy RedactionPolicy) {
 				current[key] = "[redacted]"
 			case !policy.IncludeWindowTitles && normalized == "windowtitle":
 				current[key] = "[redacted]"
-			case strings.HasSuffix(normalized, "path") || normalized == "objectname":
+			case strings.HasSuffix(normalized, "path") || normalized == "objectname" || normalized == "processimage":
 				if text, ok := child.(string); ok && policy.ObjectDetails != ObjectDetailFull {
 					if policy.ObjectDetails == ObjectDetailBasename {
 						current[key] = filepath.Base(strings.ReplaceAll(text, "\\", "/"))

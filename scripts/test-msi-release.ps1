@@ -74,8 +74,20 @@ function go {
     $components = @($global:dgpReleaseTest.Names | ForEach-Object {
         [pscustomobject]@{ fileName = $_; signature = 'trusted'; sha256 = (Get-FileHash -LiteralPath (Join-Path $directory $_)).Hash }
     })
-    @{ productVersion = '9.9.9'; signingRequired = $false; components = $components } |
+    $runtimeFiles = @(Get-ChildItem -LiteralPath $directory -Recurse -File | Where-Object {
+        $_.Name -notin $global:dgpReleaseTest.Names -and $_.Name -ne 'release-manifest.json'
+    } | ForEach-Object {
+        [pscustomobject]@{
+            path = $_.FullName.Substring($directory.TrimEnd('\').Length + 1).Replace('\', '/')
+            size = $_.Length
+            sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+        }
+    })
+    @{ productVersion = '9.9.9'; signingRequired = $false; components = $components; runtimeFiles = $runtimeFiles } |
         ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $directory 'release-manifest.json')
+    if ($global:dgpReleaseTest.CorruptRuntime) {
+        [IO.File]::WriteAllText((Join-Path $directory 'desktop-guard-ui.dll'), 'tampered native runtime')
+    }
     $global:LASTEXITCODE = 0
 }
 $fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('dgp-msi-test-' + [Guid]::NewGuid().ToString('N'))
@@ -110,6 +122,20 @@ try {
             if (@($global:dgpReleaseTest.Calls | Where-Object { $_ -like 'go *' }).Count -ne 1) { throw 'Unexpected component rebuild.' }
             if (@($global:dgpReleaseTest.Calls | Where-Object { $_ -like 'signtool sign*.exe' }).Count -ne 0) { throw 'Pre-signed inputs were re-signed.' }
         }
+    }
+    $global:dgpReleaseTest.RejectMSI = $false
+    $global:dgpReleaseTest.CorruptRuntime = $true
+    $global:dgpReleaseTest.Calls.Clear()
+    $failure = $null
+    $runtimeRejectDestination = Join-Path $fixtureRoot 'runtime-rejected'
+    try {
+        & (Join-Path $PSScriptRoot 'build-msi.ps1') -Version '9.9.9' -OutputDirectory $runtimeRejectDestination `
+            -SignedReleaseDirectory $inputs -CertificateThumbprint $global:dgpReleaseTest.Thumbprint `
+            -TimestampUrl 'http://timestamp.digicert.com'
+    } catch { $failure = $_ }
+    if ($null -eq $failure -or $failure.Exception.Message -notmatch 'runtime inventory' -or
+        @($global:dgpReleaseTest.Calls | Where-Object { $_ -eq 'candle' -or $_ -eq 'light' }).Count -ne 0) {
+        throw 'Changed native runtime was not rejected before MSI packaging.'
     }
     $finalHashes = @($global:dgpReleaseTest.Names | ForEach-Object { (Get-FileHash -LiteralPath (Join-Path $inputs $_)).Hash })
     if (($originalHashes -join ',') -ne ($finalHashes -join ',')) { throw 'The signed input release was modified.' }

@@ -152,6 +152,39 @@ func TestCreateReleaseManifestRecordsUnsignedComponents(t *testing.T) {
 	}
 }
 
+func TestReleaseManifestIncludesNativeRuntimeAndNestedResources(t *testing.T) {
+	directory := t.TempDir()
+	for _, component := range componentCommands {
+		if err := os.WriteFile(filepath.Join(directory, component.fileName), []byte(component.name), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string]string{applicationIconFileName: "icon", thirdPartyNoticesFileName: "licenses", "desktop-guard-ui.dll": "native assembly", "Assets/theme.xaml": "native theme"}
+	for name, content := range files {
+		path := filepath.Join(directory, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manifest, err := createReleaseManifest(directory, "2.11.41", time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.RuntimeFiles) != len(files) {
+		t.Fatalf("incomplete runtime inventory: %+v", manifest.RuntimeFiles)
+	}
+	for _, file := range manifest.RuntimeFiles {
+		content, exists := files[file.Path]
+		digest := sha256.Sum256([]byte(content))
+		if !exists || file.Size != int64(len(content)) || file.SHA256 != hex.EncodeToString(digest[:]) {
+			t.Fatalf("wrong runtime digest: %+v", file)
+		}
+	}
+}
+
 func TestCreateReleaseZipContainsAllFiles(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "release")
 	if err := os.Mkdir(directory, 0o700); err != nil {

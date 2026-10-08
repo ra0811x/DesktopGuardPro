@@ -66,8 +66,10 @@ type CreateSessionRequest struct {
 }
 
 type TransitionSessionRequest struct {
-	State        domain.SessionState        `json:"state"`
-	Verification *EndProtectionVerification `json:"verification,omitempty"`
+	SessionID        string                     `json:"sessionId,omitempty"`
+	ExpectedRevision *uint64                    `json:"expectedRevision,omitempty"`
+	State            domain.SessionState        `json:"state"`
+	Verification     *EndProtectionVerification `json:"verification,omitempty"`
 }
 
 type EndProtectionVerification struct {
@@ -136,6 +138,7 @@ type ErrorResult struct {
 
 type AgentActivityReportRequest struct {
 	SessionID             string            `json:"sessionId"`
+	SessionRevision       uint64            `json:"sessionRevision,omitempty"`
 	WindowTitle           string            `json:"windowTitle,omitempty"`
 	ProcessID             uint32            `json:"processId,omitempty"`
 	ProcessImage          string            `json:"processImage,omitempty"`
@@ -594,6 +597,7 @@ func (api *API) recordAgentActivity(
 	}
 	session, active := api.coordinator.Current()
 	if !active || session.ID != payload.SessionID ||
+		(payload.SessionRevision != 0 && session.Revision != payload.SessionRevision) ||
 		(session.State != domain.SessionStateActive && session.State != domain.SessionStateDegraded) {
 		return api.errorResponse(request, ErrorCodeNoCurrentSession, "agent activity has no active protection session")
 	}
@@ -1297,7 +1301,7 @@ func (api *API) resolveSessionBaselineReview(ctx context.Context, request contra
 		}
 		target = domain.SessionStateFailed
 	}
-	resolvedSession, err := api.coordinator.TransitionPersisted(target, func(next domain.Session) error {
+	resolvedSession, err := api.coordinator.TransitionPersistedFrom(session, target, func(next domain.Session) error {
 		event, eventPayload, err := api.sessionLifecycleEvent(&session, next)
 		if err != nil {
 			return err
@@ -1322,59 +1326,103 @@ func (api *API) transitionSession(request contracts.Message, client ClientIdenti
 	if err := request.DecodePayload(&payload); err != nil {
 		return api.errorResponse(request, ErrorCodeInvalidPayload, "session transition payload is invalid")
 	}
+	if payload.Verification != nil {
+		defer clear(payload.Verification.Password)
+	}
+	previous, ok := api.coordinator.Current()
+	if !ok {
+		return api.domainErrorResponse(request, ErrNoCurrentSession)
+	}
+	if payload.ExpectedRevision != nil && payload.SessionID == "" {
+		return api.errorResponse(request, ErrorCodeInvalidPayload, "expected revision requires a session ID")
+	}
+	// Baseline capture may finish between the UI's preparing response and its
+	// active request. Return the pending review without applying a transition.
+	if payload.State == domain.SessionStateActive && payload.SessionID == previous.ID &&
+		previous.State == domain.SessionStateBaselineReview && payload.ExpectedRevision != nil &&
+		previous.Revision > 0 && *payload.ExpectedRevision == previous.Revision-1 {
+		return api.response(request, contracts.MessageTypeSessionResult, SessionResult{Session: &previous})
+	}
+	if (payload.SessionID != "" && payload.SessionID != previous.ID) ||
+		(payload.ExpectedRevision != nil && *payload.ExpectedRevision != previous.Revision) {
+		return api.domainErrorResponse(request, ErrSessionChanged)
+	}
 	if payload.State == domain.SessionStateFinalizing {
 		if err := api.verifyEndProtection(request, client, payload.Verification); err != nil {
 			return api.errorResponse(request, verificationErrorCode(err), "system credential verification did not complete")
 		}
 	}
-	return api.transitionSessionState(request, payload.State)
+	return api.transitionSessionStateFrom(request, payload.State, previous)
 }
 
-func (api *API) transitionSessionState(
+func (api *API) transitionSessionStateFrom(
 	request contracts.Message,
 	nextState domain.SessionState,
+	previous domain.Session,
 ) (contracts.Message, error) {
-	previous, hadPrevious := api.coordinator.Current()
-	atomicStore, useAtomicStore := api.store.(sessionLifecycleTransitionStore)
 	remaining := request.DeadlineUTC.Sub(api.now().UTC())
 	ctx, cancel := context.WithTimeout(context.Background(), remaining)
 	defer cancel()
 	api.lifecycleMutex.RLock()
 	lifecycle := api.sessionLifecycle
 	api.lifecycleMutex.RUnlock()
+	resuming := lifecycle != nil && nextState == domain.SessionStateActive && previous.State == domain.SessionStatePaused
+	if resuming {
+		resumed, err := api.persistSessionTransition(ctx, previous, nextState)
+		if err != nil {
+			return api.domainErrorResponse(request, err)
+		}
+		previous = resumed
+	}
 	if lifecycle != nil {
 		lifecycleCtx, lifecycleCancel := context.WithTimeout(ctx, remaining)
 		defer lifecycleCancel()
 		var err error
 		switch nextState {
 		case domain.SessionStateActive:
-			session, ok := api.coordinator.Current()
-			if !ok {
-				return api.errorResponse(request, ErrorCodeNoCurrentSession, ErrNoCurrentSession.Error())
-			}
-			err = lifecycle.WaitForActive(lifecycleCtx, session.ID)
+			err = lifecycle.WaitForActive(lifecycleCtx, previous.ID)
 		case domain.SessionStateCompleted:
-			session, ok := api.coordinator.Current()
-			if !ok {
-				return api.errorResponse(request, ErrorCodeNoCurrentSession, ErrNoCurrentSession.Error())
-			}
-			err = lifecycle.WaitForStopped(lifecycleCtx, session.ID)
+			err = lifecycle.WaitForStopped(lifecycleCtx, previous.ID)
 		}
 		if err != nil {
-			if nextState == domain.SessionStateActive {
-				if pending, ok := api.coordinator.Current(); ok && pending.State == domain.SessionStateBaselineReview {
+			if resuming {
+				// The request deadline may have expired. Roll back only our own
+				// revision, with a bounded context independent of that deadline.
+				rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				_, rollbackErr := api.persistSessionTransition(rollbackCtx, previous, domain.SessionStatePaused)
+				rollbackCancel()
+				if rollbackErr != nil && !errors.Is(rollbackErr, ErrSessionChanged) {
+					return api.domainErrorResponse(request, rollbackErr)
+				}
+			} else if nextState == domain.SessionStateActive {
+				if pending, ok := api.coordinator.Current(); ok && pending.ID == previous.ID && pending.State == domain.SessionStateBaselineReview {
 					return api.response(request, contracts.MessageTypeSessionResult, SessionResult{Session: &pending})
 				}
 			}
 			return api.errorResponse(request, ErrorCodeInvalidRequest, "collector lifecycle transition did not complete")
 		}
 	}
+	if resuming {
+		current, ok := api.coordinator.Current()
+		if !ok || current.ID != previous.ID || current.Revision != previous.Revision || current.State != previous.State {
+			return api.domainErrorResponse(request, ErrSessionChanged)
+		}
+		return api.response(request, contracts.MessageTypeSessionResult, SessionResult{Session: &current})
+	}
+	session, err := api.persistSessionTransition(ctx, previous, nextState)
+	if err != nil {
+		return api.domainErrorResponse(request, err)
+	}
+	return api.response(request, contracts.MessageTypeSessionResult, SessionResult{Session: &session})
+}
 
-	session, err := api.coordinator.TransitionPersisted(nextState, func(session domain.Session) error {
+func (api *API) persistSessionTransition(ctx context.Context, previous domain.Session, nextState domain.SessionState) (domain.Session, error) {
+	atomicStore, useAtomicStore := api.store.(sessionLifecycleTransitionStore)
+	session, err := api.coordinator.TransitionPersistedFrom(previous, nextState, func(session domain.Session) error {
 		if api.store == nil {
 			return nil
 		}
-		if hadPrevious && useAtomicStore {
+		if useAtomicStore {
 			event, payload, err := api.sessionLifecycleEvent(&previous, session)
 			if err != nil {
 				return err
@@ -1390,14 +1438,14 @@ func (api *API) transitionSessionState(
 		return nil
 	})
 	if err != nil {
-		return api.domainErrorResponse(request, err)
+		return domain.Session{}, err
 	}
-	if hadPrevious && !useAtomicStore {
+	if !useAtomicStore {
 		if err := api.recordSessionLifecycleEvent(ctx, &previous, session); err != nil {
-			return api.domainErrorResponse(request, err)
+			return domain.Session{}, err
 		}
 	}
-	return api.response(request, contracts.MessageTypeSessionResult, SessionResult{Session: &session})
+	return session, nil
 }
 
 func (api *API) recordSessionLifecycleEvent(
@@ -1753,11 +1801,20 @@ func (api *API) inputShieldVerificationSucceeded(
 		return api.response(request, contracts.MessageTypeInputShieldCredentialResult, InputShieldCredentialResult{Verified: true})
 	}
 	if control.Policy.UnlockAction == domain.InputShieldUnlockActionEndSession {
+		expected, ok := api.coordinator.Current()
+		if !ok || expected.ID != control.ControlID {
+			return api.errorResponse(request, ErrorCodeInputShieldUnavailable, "protection session changed before verification completed")
+		}
 		for _, state := range []domain.SessionState{domain.SessionStateFinalizing, domain.SessionStateCompleted} {
-			response, err := api.transitionSessionState(request, state)
+			response, err := api.transitionSessionStateFrom(request, state, expected)
 			if err != nil || response.Type == contracts.MessageTypeError {
 				return response, err
 			}
+			var result SessionResult
+			if err := response.DecodePayload(&result); err != nil || result.Session == nil {
+				return api.errorResponse(request, ErrorCodeInvalidRequest, "protection session transition returned no session")
+			}
+			expected = *result.Session
 		}
 	}
 	return api.response(request, contracts.MessageTypeInputShieldCredentialResult, InputShieldCredentialResult{Verified: true})
@@ -1817,7 +1874,7 @@ func (api *API) domainErrorResponse(
 		return api.errorResponse(request, ErrorCodeSessionInProgress, err.Error())
 	case errors.Is(err, ErrNoCurrentSession):
 		return api.errorResponse(request, ErrorCodeNoCurrentSession, err.Error())
-	case errors.Is(err, domain.ErrInvalidSessionTransition):
+	case errors.Is(err, domain.ErrInvalidSessionTransition), errors.Is(err, ErrSessionChanged):
 		return api.errorResponse(request, ErrorCodeInvalidTransition, err.Error())
 	case errors.Is(err, ErrSessionPersistence):
 		return api.errorResponse(request, ErrorCodeStorageFailure, "session state could not be persisted")

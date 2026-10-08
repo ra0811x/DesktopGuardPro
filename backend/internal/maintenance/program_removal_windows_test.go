@@ -24,7 +24,7 @@ func TestScheduleInstalledProgramRemovalUsesManifestDirectoryOnly(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(scheduled) != 5 || !samePath(scheduled[len(scheduled)-1], directory) || filepath.Base(scheduled[3]) != "desktop-guard-maintenance.exe" {
+	if len(scheduled) != 6 || !samePath(scheduled[len(scheduled)-1], directory) || filepath.Base(scheduled[3]) != "desktop-guard-maintenance.exe" {
 		t.Fatalf("scheduled paths = %#v", scheduled)
 	}
 }
@@ -41,6 +41,8 @@ func TestScheduleInstalledProgramRemovalRejectsSplitDirectories(t *testing.T) {
 func TestFilterPendingProgramRemovalsKeepsUnrelatedOperations(t *testing.T) {
 	installDirectory := `C:\Program Files\Desktop Guard Pro`
 	values := []string{
+		`\??\C:\Program Files\Desktop Guard Pro\desktop-guard-ui.dll`, "",
+		`\??\C:\Program Files\Desktop Guard Pro\Assets\theme.xaml`, "",
 		`\??\C:\Program Files\Desktop Guard Pro\desktop-guard-service.exe`, "",
 		`\??\C:\Other App\other.exe`, "",
 		`\??\C:\Temp\old.txt`, `\??\C:\Temp\new.txt`,
